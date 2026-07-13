@@ -1,0 +1,12 @@
+{
+  "domain": "family_dashboard",
+  "name": "Family Dashboard",
+  "codeowners": ["@PhilTheITGuy-USA"],
+  "config_flow": true,
+  "dependencies": ["lovelace"],
+  "documentation": "https://github.com/PhilTheITGuy-USA/family-dashboard",
+  "issue_tracker": "https://github.com/PhilTheITGuy-USA/family-dashboard/issues",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.1.0"
+}

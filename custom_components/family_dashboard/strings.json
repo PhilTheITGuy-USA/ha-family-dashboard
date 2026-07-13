@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Family Dashboard - Roster",
+        "description": "Enter your family's names (comma-separated). You'll set each person's color on the next screen.",
+        "data": {
+          "roster": "Family member names (comma-separated)"
+        }
+      },
+      "colors": {
+        "title": "Family Dashboard - Colors",
+        "description": "Pick a color for each family member: {roster}"
+      },
+      "modules": {
+        "title": "Family Dashboard - Modules",
+        "description": "Which features do you want? (Settings/Roster is always included.)",
+        "data": {
+          "modules": "Modules to enable"
+        }
+      },
+      "confirm": {
+        "title": "Family Dashboard - Confirm",
+        "description": "About to create:\n- Roster: {roster_summary}\n- Modules: {module_summary}\n\nSubmit to provision everything now."
+      }
+    },
+    "error": {
+      "roster_empty": "Enter at least one family member name."
+    },
+    "abort": {
+      "already_configured": "Family Dashboard has already been set up on this instance."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Family Dashboard",
+        "description": "Re-running the roster/module wizard isn't supported yet in v1 - add or change things by hand for now."
+      }
+    }
+  }
+}
