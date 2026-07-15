@@ -12,20 +12,50 @@
         "title": "Family Dashboard - Colors",
         "description": "Pick a color for each family member: {roster}"
       },
-      "modules": {
-        "title": "Family Dashboard - Modules",
-        "description": "Which features do you want? (Settings/Roster is always included.)",
-        "data": {
-          "modules": "Modules to enable"
-        }
+      "avatars": {
+        "title": "Family Dashboard - Avatars",
+        "description": "Pick an avatar for each family member: {roster}. You can pick from a bigger picture grid, or add your own photos, later from Settings."
+      },
+      "birthdates": {
+        "title": "Family Dashboard - Birthdates",
+        "description": "Optionally set a birthdate for each family member: {roster}. Powers the Birthdays overlay on the Calendar tab - skip anyone you'd rather not set one for."
+      },
+      "features": {
+        "title": "Family Dashboard - Features",
+        "description": "For each family member ({roster}), choose which features they want. Settings/Roster is always included for everyone."
+      },
+      "link_users": {
+        "title": "Family Dashboard - Link HA Users (optional)",
+        "description": "Optionally link each family member ({roster}) to an existing Home Assistant user account. This lets them see their own personal dashboard view later. Leave a field blank to skip - you can set this later."
+      },
+      "calendar_none_found": {
+        "title": "Family Dashboard - Calendar",
+        "description": "No calendars were found on this Home Assistant instance yet. Supported types: Google Calendar (set up under Settings > Devices & Services), or a zero-config Local Calendar. Continue for now - you can map a calendar for these family members later by re-running this wizard, once one exists."
+      },
+      "calendar": {
+        "title": "Family Dashboard - Calendar",
+        "description": "For each family member who wants Calendar ({roster}), optionally map an existing calendar and, separately, a notify target for reminders. Leave either blank to skip - you can set this later. At most one member's mapped calendar may also be checked as the shared Family calendar, shown on every viewer's Calendar tab."
+      },
+      "lists": {
+        "title": "Family Dashboard - Lists",
+        "description": "For each family member who wants Lists ({roster}), choose which lists to create for them (To-Do, Shopping, Packing, Gift Ideas, Custom). Each person's lists are private to them."
+      },
+      "add_chore": {
+        "title": "Family Dashboard - Chores",
+        "description": "{count} chore(s) added so far. Add another for one of: {roster} - or leave the name blank to move on to Rewards."
+      },
+      "add_reward": {
+        "title": "Family Dashboard - Rewards",
+        "description": "{count} reward(s) added so far. Add another for one of: {roster} - or leave the name blank to finish setup."
       },
       "confirm": {
         "title": "Family Dashboard - Confirm",
-        "description": "About to create:\n- Roster: {roster_summary}\n- Modules: {module_summary}\n\nSubmit to provision everything now."
+        "description": "About to create:\n{roster_summary}\n\nSubmit to provision everything now."
       }
     },
     "error": {
-      "roster_empty": "Enter at least one family member name."
+      "roster_empty": "Enter at least one family member name.",
+      "family_calendar_multiple": "Only one family member's calendar may be checked as the shared Family calendar."
     },
     "abort": {
       "already_configured": "Family Dashboard has already been set up on this instance."
@@ -35,8 +65,70 @@
     "step": {
       "init": {
         "title": "Family Dashboard",
-        "description": "Re-running the roster/module wizard isn't supported yet in v1 - add or change things by hand for now."
+        "menu_options": {
+          "add_member": "Add Family Member"
+        }
+      },
+      "add_member": {
+        "title": "Add Family Member - Name",
+        "description": "Enter the new family member's name. You'll set their color and features on the next screens.",
+        "data": {
+          "name": "Name"
+        }
+      },
+      "add_color": {
+        "title": "Add Family Member - Color",
+        "description": "Pick a color for {name}."
+      },
+      "add_avatar": {
+        "title": "Add Family Member - Avatar",
+        "description": "Pick an avatar for {name}. You can pick from a bigger picture grid, or add your own photos, later from Settings."
+      },
+      "add_birthdate": {
+        "title": "Add Family Member - Birthdate",
+        "description": "Optionally set {name}'s birthdate. Powers the Birthdays overlay on the Calendar tab - leave blank to skip."
+      },
+      "add_features": {
+        "title": "Add Family Member - Features",
+        "description": "Choose which features {name} wants. Settings/Roster is always included for everyone."
+      },
+      "add_link_user": {
+        "title": "Add Family Member - Link HA User (optional)",
+        "description": "Optionally link {name} to an existing Home Assistant user account (accounts already linked to another family member aren't listed). This lets them see their own personal dashboard view. Leave blank to skip - you can set this later by re-running this wizard."
+      },
+      "add_calendar_none_found": {
+        "title": "Add Family Member - Calendar",
+        "description": "No calendars were found on this Home Assistant instance yet. Supported types: Google Calendar (set up under Settings > Devices & Services), or a zero-config Local Calendar. Continue for now - you can map a calendar for {name} later by re-running this wizard, once one exists."
+      },
+      "add_calendar": {
+        "title": "Add Family Member - Calendar",
+        "description": "Optionally map an existing calendar for {name}, and separately, a notify target for reminders. Leave either blank to skip - you can set this later. Setting up the underlying calendar itself (Google Calendar, Local Calendar, etc.) is a separate, manual step outside this integration."
+      },
+      "add_lists": {
+        "title": "Add Family Member - Lists",
+        "description": "Choose which lists to create for {name} (To-Do, Shopping, Packing, Gift Ideas, Custom)."
+      },
+      "add_chore": {
+        "title": "Add Family Member - Chores",
+        "description": "{count} chore(s) added so far for {name}. Add another, or leave the name blank to move on to Rewards."
+      },
+      "add_reward": {
+        "title": "Add Family Member - Rewards",
+        "description": "{count} reward(s) added so far for {name}. Add another, or leave the name blank to finish."
+      },
+      "add_confirm": {
+        "title": "Add Family Member - Confirm",
+        "description": "About to add:\n{member_summary}\n\nSubmit to provision this family member now - every other member's setup is left untouched."
       }
+    },
+    "error": {
+      "name_required": "Enter a name."
+    }
+  },
+  "issues": {
+    "unmapped_user": {
+      "title": "{name} isn't in your Family Dashboard roster",
+      "description": "The Home Assistant user \"{name}\" doesn't have a Family Dashboard roster member linked to them, so they currently see the shared Kiosk view (everyone's calendars, lists, and chores) instead of their own. To fix, go to Settings > Devices & Services > Family Dashboard > Configure > Add Family Member and link them. If this user should never be part of the roster (e.g. an admin or kiosk-device account), you can ignore this issue and it will stay ignored."
     }
   }
 }

@@ -1,2 +1,9 @@
-pytest-homeassistant-custom-component
+pytest-homeassistant-custom-component==0.13.346
 pytest-asyncio
+
+# HA's built-in "Holiday" integration's own manifest-pinned requirements (holidays_setup.py
+# drives its real config flow in tests) - the disposable pytest container doesn't auto-install
+# per-component requirements the way a real running HA instance does, so these need to be
+# explicit here to exercise that flow at all under test.
+holidays==0.100
+babel==2.18.0

@@ -1,0 +1,155 @@
+deny_task:
+  name: Deny chore or reward claim
+  description: Deny a claimed chore or reward, with a required reason logged to the Logbook.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+  fields:
+    reason:
+      name: Reason
+      description: Why the claim is being denied.
+      required: true
+      selector:
+        text:
+
+adjust_points:
+  name: Adjust points
+  description: Manually add or subtract points from a roster member's points total.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+  fields:
+    delta:
+      name: Delta
+      description: Points to add (positive) or subtract (negative).
+      required: true
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          mode: box
+
+delete_task:
+  name: Delete chore or reward
+  description: >-
+    Permanently delete a chore or reward and all of its entities (task sensor, claim/approve
+    buttons, and per-item edit fields) - a real removal, not a hide. There is no undo.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+
+delete_member:
+  name: Delete roster member
+  description: >-
+    Permanently delete a roster member and every entity they own (Name/Color/Avatar/
+    Birthdate, calendar/notify mapping, feature toggles, calendar, chores/points, lists).
+    Their chores/rewards fall back to Unassigned rather than being deleted themselves.
+    There is no undo - to temporarily remove a member instead, use their "Enabled" switch.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+
+unlock_parent_mode:
+  name: Unlock parent mode
+  description: Unlock parent mode for 5 minutes if the PIN matches.
+  target:
+    entity:
+      domain: binary_sensor
+      integration: family_dashboard
+  fields:
+    pin:
+      name: PIN
+      description: The parent PIN to check against.
+      required: true
+      selector:
+        text:
+          type: password
+
+append_pin_digit:
+  name: Append PIN digit
+  description: >-
+    Append one digit to the dashboard's PIN-entry buffer; once 4 digits have accumulated,
+    checks the buffer against the parent PIN and unlocks parent mode if it matches, then
+    clears the buffer either way.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+  fields:
+    digit:
+      name: Digit
+      description: A single digit (0-9) tapped on the dashboard's numpad.
+      required: true
+      selector:
+        text:
+
+append_pin_digit_raw:
+  name: Append PIN digit (no auto-submit)
+  description: >-
+    Append one digit to the dashboard's PIN-entry buffer without any auto-submit behavior -
+    used by the PIN-change flow's popup, which has its own explicit Verify/Save buttons.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+  fields:
+    digit:
+      name: Digit
+      description: A single digit (0-9) tapped on the dashboard's numpad.
+      required: true
+      selector:
+        text:
+
+verify_old_pin:
+  name: Verify old parent PIN
+  description: >-
+    Check the PIN-entry buffer against the current parent PIN; if it matches, opens a
+    60-second window to save a new PIN. Clears the buffer either way.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+
+save_new_pin:
+  name: Save new parent PIN
+  description: >-
+    While the 60-second PIN-change window is open, saves the PIN-entry buffer (3-8
+    characters) as the new parent PIN and closes the window. No-ops if the window isn't open.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+
+add_event:
+  name: Add calendar event
+  description: >-
+    Create an event on the Add Event popup's selected calendar from its scratch fields
+    (title, description, all-day/timed start-end, reminder checkboxes), then clears them.
+  target:
+    entity:
+      domain: select
+      integration: family_dashboard
+
+add_chore:
+  name: Add chore
+  description: >-
+    Create a new chore from the Add Chore popup's scratch fields (name, points, frequency,
+    assigned-to), then clears them. No-ops silently if the name field is left blank.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+
+add_reward:
+  name: Add reward
+  description: >-
+    Create a new reward from the Add Reward popup's scratch fields (name, cost, assigned-to),
+    then clears them. No-ops silently if the name field is left blank.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard

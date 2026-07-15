@@ -1,16 +1,19 @@
-"""Lists module - STUB, not yet implemented.
+"""Lists module - Family Dashboard's own `todo` platform.
 
-To build:
-- Family Dashboard's OWN `todo` platform - a `FamilyDashboardTodoListEntity` per selected
-  preset (To-Do, Shopping, Packing, Gift Ideas, Custom - reuse the preset table from
-  `ha-family-hub-setup-plan.md`, it's still a good list). Deliberately NOT chained into
-  HA's core `local_todo` config flow the way v1 did - owning the entity directly means no
-  dependency on another integration's config-flow internals staying stable across HA
-  versions, and no separate config entries to manage.
-- A config-flow step class here for preset selection (multi-select, mirrors v1's
-  `list_presets` step), chained into `config_flow.py`'s `async_step_modules`, gated on
-  "lists" being selected.
-- Add a top-level `todo.py` shim once real entities exist, replacing the stub at
-  `custom_components/family_dashboard/todo.py` today (see modules/settings/ for the shim
-  pattern).
+Entity classes live in `modules/lists/todo.py` (`FamilyDashboardTodoListEntity`, one per
+(roster member who has "lists" in their own `features` list, selected preset) pair -
+isolated per person, e.g. `todo.family_dashboard_ada_shopping` and
+`todo.family_dashboard_grace_shopping` are separate entities). The top-level `todo.py` is a
+thin shim re-exporting that module's `async_setup_entry` (see modules/__init__.py's
+docstring for why HA requires platform files at the integration's top level).
+
+The per-member preset picker is `config_flow.py`'s `async_step_lists`, chained in after
+`async_step_link_users` and only shown if at least one roster member selected "lists" in
+`async_step_features`. Presets (To-Do, Shopping, Packing, Gift Ideas, Custom) live in
+`const.py`'s `LIST_PRESETS`, sourced from the legacy `ha-family-hub-setup-plan.md` table.
+
+Item persistence uses `RestoreEntity`'s `extra_restore_state_data`/`async_get_last_extra_data`
+mechanism (not a plain `State` string, which can't hold a list of items) - same "own entity
+platform + RestoreEntity, no YAML" principle `modules/settings/` established for scalar
+values, just the structured-data variant.
 """

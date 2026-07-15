@@ -8,3 +8,4 @@ venv/
 dev.env
 family-dashboard-dev-config/
 config/
+.claude/

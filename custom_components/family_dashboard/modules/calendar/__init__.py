@@ -1,20 +1,25 @@
-"""Calendar module - STUB, not yet implemented.
+"""Calendar module - Family Dashboard's own `calendar` platform.
 
-To build:
-- One `CalendarEntity` per roster member, mapped to a real `calendar.*` entity (Google
-  Calendar, Local Calendar, etc.) chosen via a guided config-flow step - NOT a hardcoded
-  placeholder like v1's `calendar.PERSON_1`. That step must: scan
-  `hass.states.async_all("calendar")`, let the user map one calendar per roster member (or
-  explicitly mark "no calendar yet" - never silently leave it unmapped), and if none exist,
-  show instructions + a retry button that re-scans without restarting the whole wizard. See
-  `family-hub-v2-rebuild-plan.md`'s "Decided" section - this must be real and checked, not a
-  documented manual step, per Phillip's own feedback on why v1's wizard felt pointless.
-- Port the reminder logic from `ha-family-hub`'s `packages/family_hub_calendar.yaml`
-  (opt-in per-event push reminders with a lead time in days/hours/minutes) as this module's
-  own entity/service, not a YAML script+automation pair.
-- Add a config-flow step class here (e.g. `CalendarMappingStep`) and chain it into
-  `config_flow.py`'s `async_step_modules`, gated on "calendar" being selected.
-- Add a top-level `calendar.py` shim once real entities exist, replacing the stub at
-  `custom_components/family_dashboard/calendar.py` today (see modules/settings/ for the
-  shim pattern).
+Entity classes live in `modules/calendar/calendar.py` (`FamilyDashboardCalendarEntity`, one
+per roster member who mapped a real `calendar.*` entity via the wizard's `calendar` step - a
+full read+write proxy, not a display-only wrapper, forwarding to the mapped source entity via
+`EntityComponent.get_entity()`). The top-level `calendar.py` is a thin shim re-exporting that
+module's `async_setup_entry` (see modules/__init__.py's docstring for why HA requires
+platform files at the integration's top level).
+
+The guided mapping step is `config_flow.py`'s `async_step_calendar` (falling back to
+`async_step_calendar_none_found` if no calendars exist anywhere yet), chained in after
+`async_step_link_users` and only shown if at least one roster member selected "calendar" in
+`async_step_features`.
+
+The opt-in per-event reminder engine (ported from `ha-family-hub`'s
+`packages/family_hub_calendar.yaml`) lives in `modules/calendar/reminders.py` - a background
+5-minute poll, not a new entity type, registered from `calendar.py`'s own `async_setup_entry`
+and cancelled in the top-level `__init__.py`'s `async_unload_entry`.
+
+`modules/calendar/dashboard.py`'s `async_calendar_view_card` is this module's dashboard-
+template contribution (see `dashboard/registry.py`'s docstring for the multi-view assembly
+it plugs into) - a multi-calendar `week-planner-card`, called once per VIEW rather than once
+per member (a documented exception to the general per-member pattern, since the card type
+itself natively overlays multiple calendars in one grid).
 """

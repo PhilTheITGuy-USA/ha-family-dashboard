@@ -1,0 +1,40 @@
+# Ported forward from the legacy ha-family-hub `themes/family-hub.yaml` (2026-07-13 feature
+# audit) - same values, renamed theme key to match this integration. Seeded into
+# /config/themes/family_dashboard.yaml on first entry setup (see ../assets.py); picked up
+# automatically since HA's default configuration.yaml already has
+# `frontend: { themes: !include_dir_merge_named themes }`.
+Family Dashboard:
+  card-mod-theme: Family Dashboard
+  card-mod-root-yaml: |
+    .: |
+      @import url('https://fonts.googleapis.com/css2?family=Ovo&display=swap');
+  primary-font-family: "'Ovo', serif"
+  ha-card-header-font-family: "var(--primary-font-family)"
+  paper-font-common-base_-_font-family: "var(--primary-font-family)"
+  paper-font-body1_-_font-family: "var(--primary-font-family)"
+  paper-font-subhead_-_font-family: "var(--primary-font-family)"
+  paper-font-headline_-_font-family: "var(--primary-font-family)"
+  paper-font-title_-_font-family: "var(--primary-font-family)"
+
+  primary-background-color: "#e9eff7"
+  secondary-background-color: "#dfe8f3"
+  card-background-color: "rgba(255,255,255,0.75)"
+  ha-card-background: "rgba(255,255,255,0.75)"
+  ha-card-border-radius: "24px"
+  ha-card-box-shadow: "none"
+  primary-text-color: "#2b2b2b"
+  secondary-text-color: "#5a5a5a"
+  primary-color: "#4A90E2"
+  accent-color: "#fb8072"
+  divider-color: "rgba(0,0,0,0.08)"
+  app-header-background-color: "transparent"
+  app-header-text-color: "#2b2b2b"
+
+  input-fill-color: "#eef2f7"
+  input-ink-color: "#2b2b2b"
+  input-label-ink-color: "#5a5a5a"
+  input-idle-line-color: "rgba(0,0,0,0.25)"
+  input-hover-line-color: "rgba(0,0,0,0.5)"
+  input-dropdown-icon-color: "#5a5a5a"
+  input-disabled-fill-color: "#e6ebf2"
+  input-disabled-ink-color: "#9aa0a6"

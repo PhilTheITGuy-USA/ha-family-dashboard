@@ -1,18 +1,27 @@
-"""Chores & Rewards module - STUB, not yet implemented.
+"""Chores & Rewards module - Family Dashboard's own `sensor`/`button`/`text`/`binary_sensor`
+platforms.
 
-To build (in-house, NOT a ChoreOps/KidsChores dependency - see
-`project_choreops_kidschores_successor` memory / the rebuild plan's positioning section for
-why: this is intentionally simpler than ChoreOps, individual + shared chores, points,
-approve/deny with a required reason, no rotation logic/badges/XP/ranks/quests):
-- `sensor` entities: one per roster member for points total, plus per-chore state.
-- `button` entities: Claim (per chore) / Redeem (per reward) for kids, Approve / Deny for
-  the parent-facing flow - port the good ideas from `ha-family-hub`'s Parent Review tab
-  (per-kid picker, required deny reason logged to the Logbook) but as entities/services
-  this integration owns directly, not YAML scripts + input_booleans.
-- Parent PIN / parent-mode gating: same UI-lock concept as v1's `family_hub_parent.yaml`,
-  but as this module's own `binary_sensor`/`text`/`button` entities with RestoreEntity for
-  the PIN, not an `input_boolean`/`input_text` YAML package.
-- Add top-level `sensor.py`/`button.py` shims once real entities exist, replacing the stubs
-  at `custom_components/family_dashboard/sensor.py` / `button.py` today (see
-  modules/settings/ for the shim pattern).
+Entity classes: `modules/chores/sensor.py` (`FamilyDashboardPointsSensor` per chores-opted
+roster member, `FamilyDashboardTaskSensor` per chore/reward - status idle -> claimed ->
+approved/denied), `modules/chores/button.py` (Claim/Approve per chore/reward, plus Lock
+Parent Mode), `modules/chores/text.py` (the parent PIN), `modules/chores/binary_sensor.py`
+(parent-mode gating). Deny (needs a reason), point adjustment (needs a delta), and parent-mode
+unlock (needs a PIN) are entity-registered custom services
+(`family_dashboard.deny_task`/`adjust_points`/`unlock_parent_mode`), not buttons - buttons
+carry no parameters.
+
+Top-level shims: `sensor.py`/`button.py`/`binary_sensor.py` are plain 1:1 re-exports.
+`text.py` is NOT - it's a small aggregator, since Settings (roster names, always-on) and
+Chores (parent PIN, conditional) both need the `text` platform for the same config entry,
+and HA only calls one `async_setup_entry` per (entry, platform) pair. See the top-level
+`text.py`'s own docstring.
+
+The repeat-add wizard steps are `config_flow.py`'s `async_step_add_chore`/`async_step_add_reward`,
+chained in after `lists` and only shown if at least one roster member selected "chores" in
+`async_step_features` (Rewards has no separate feature toggle). `entry.data["chores"]`/
+`["rewards"]` are top-level lists (not per-roster-member fields, unlike Calendar/Lists) -
+see const.py's `CONF_CHORES`/`CONF_REWARDS` docstring for why.
+
+`frequency` is a display label only in v1 - no once-per-day/week claim-locking scheduling,
+per the rebuild plan's positioning (deliberately simpler than ChoreOps/KidsChores).
 """

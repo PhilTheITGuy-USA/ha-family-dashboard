@@ -17,30 +17,48 @@ neither was true on a real install, so nothing appeared. Family Dashboard fixes 
 architecturally: every entity is created live, owned directly by this integration - no YAML,
 no restart dependency.
 
-## Status: early scaffold (2026-07-10)
+## Status: beta (2026-07-14)
 
-- **Settings/Roster**: fully implemented - reference implementation for "own entity
-  platform, no YAML." One color (`select`) and one name (`text`) entity per roster member,
-  created live, `RestoreEntity`-backed so edits persist across restarts.
-- **Calendar, Lists, Chores & Rewards**: stubbed. Enabling them in the wizard today creates
-  zero entities (logged, not a crash) - see each module's docstring under
-  `custom_components/family_dashboard/modules/` for what needs to be built.
-- **Dashboard generation/registration**: not yet wired in - deliberately left out until the
-  toggleable modules are real, so it doesn't generate an empty shell. See
-  `dashboard/registry.py` and `dashboard/register.py`.
-- **Google Calendar guided mapping step**: not yet implemented - belongs to the Calendar
-  module once built out.
+Feature-complete against the v1 plan and live-validated end-to-end - not an early scaffold.
+Setup is a single wizard (Roster → Colors → Avatars → Birthdates → Features → Link HA users →
+Calendar → Lists → Chores & Rewards → Confirm) that provisions everything live, no YAML, no
+restart required for anything it creates.
 
-See `family-dashboard-claude-code-brief.md` for the build-out plan and the mandatory
-live-instance validation gate (this project's last attempt shipped 13/13 passing tests and
-still failed its first real install - a live end-to-end run is a required step here, not
-optional).
+- **Settings/Roster**: always-on core. Name, color (16 choices), avatar (own live-updating
+  picker, folder-backed so new images drop in without a code change), and birthdate per
+  member, all `RestoreEntity`-backed and editable any time from the Settings tab - not just at
+  setup.
+- **Calendar**: per-member calendar mapping onto whatever real calendar service is already
+  connected, plus a shared Family calendar, an own-computed Birthdays calendar (no external
+  "Birthdays" integration - HA doesn't ship one), and Holidays auto-provisioned for the US and
+  the Philippines via HA's own Holiday integration on first setup. Reminders resolve their
+  notify target live from whichever phone is currently linked to that person's HA account.
+- **Lists**: per-member preset to-do lists (To-Do/Shopping/Packing/Gift Ideas/Custom), fully
+  isolated between family members.
+- **Chores & Rewards**: points economy with a claim → approve/deny (reason required) flow,
+  PIN-gated Parent Review, and an Unassigned option for shared household chores with no single
+  owner.
+- **Dashboard**: generated and registered automatically - four uniformly-labeled tabs
+  (Calendar/Lists/Chores/Settings) for every viewer; the wall-mounted Kiosk sees everyone at
+  once with toggle-filter pills, anyone logged in via their own linked HA account sees only
+  their own.
+- **Reconfigure**: a real Options Flow - add a member, change anyone's features/calendar/
+  notify mapping any time, disable a feature reversibly, or permanently delete a member
+  (their chores/rewards fall back to Unassigned rather than vanishing).
+- **Deliberately deferred, not gaps**: a Meals module (the feature registry is already shaped
+  for it) and best-effort import from the legacy `ha-family-hub` install (stubbed, not a
+  launch requirement).
+
+See `family-dashboard-claude-code-brief.md` for the full build history and the mandatory
+live-instance validation gate this project holds itself to (the predecessor shipped 13/13
+passing tests and still failed its first real install - a live end-to-end run against a real
+HA instance is required before anything here is called done, not just the automated suite).
 
 ## Module architecture
 
 Each toggleable feature (Calendar, Lists, Chores & Rewards) is a self-contained module under
 `custom_components/family_dashboard/modules/<name>/`. Settings/Roster is always-on core, not
-a toggle - see `const.py`'s `MODULES` registry and `modules/__init__.py`'s docstring for the
+a toggle - see `const.py`'s `FEATURES` registry and `modules/__init__.py`'s docstring for the
 module contract new features (Meals, etc.) need to follow.
 
 ## Development

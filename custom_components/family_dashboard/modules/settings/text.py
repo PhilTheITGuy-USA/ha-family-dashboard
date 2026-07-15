@@ -1,5 +1,10 @@
 """Roster display-name `text` entities - one per family member, always provisioned.
 
+Also registers the `delete_member` entity service on `RosterNameText` (every member always
+has exactly one, guaranteed to exist - same reasoning `family_dashboard.delete_task` is
+registered on the chores task sensor) - the Settings dashboard's "Remove Member" Delete tile
+targets it, permanently removing the member (see `roster.py`'s `async_delete_member`).
+
 Re-exported by the top-level `text.py` shim (HA requires platform files at the
 integration's top level - see modules/__init__.py's docstring).
 """
@@ -8,6 +13,7 @@ from __future__ import annotations
 from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -20,6 +26,9 @@ async def async_setup_entry(
 ) -> None:
     roster = entry.data[CONF_ROSTER]
     async_add_entities(RosterNameText(entry, member) for member in roster)
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service("delete_member", {}, "async_delete_member")
 
 
 class RosterNameText(TextEntity, RestoreEntity):
@@ -59,3 +68,13 @@ class RosterNameText(TextEntity, RestoreEntity):
     async def async_set_value(self, value: str) -> None:
         self._attr_native_value = value
         self.async_write_ha_state()
+
+    async def async_delete_member(self) -> None:
+        """Permanently deletes this roster member - see `roster.py`'s `async_delete_member`
+        for the full removal/cleanup shape. Imported locally to avoid a circular import
+        (`roster.py` doesn't import this module, but keeping the import local matches this
+        codebase's established convention for cross-module service delegation, e.g.
+        `modules/chores/sensor.py`'s own `async_delete`)."""
+        from ... import roster
+
+        await roster.async_delete_member(self.hass, self._entry, self._member_id)

@@ -1,24 +1,24 @@
-"""STUB platform file - see modules/chores/__init__.py for what this needs to become.
-
-Adds zero entities so enabling the Chores & Rewards module in the wizard today doesn't
-crash - it just does nothing yet, logged clearly so it's obvious in the logs, not a silent
-no-op.
+"""Platform aggregator, NOT a plain 1:1 shim - Settings (avatars sensor, always-on) and
+Chores & Rewards (points/task sensors, conditional on any roster member having "chores"
+enabled) both need the `sensor` platform for the same config entry, and HA only calls one
+async_setup_entry per (entry, platform) pair. Same shape as text.py's aggregator - see that
+file's docstring.
 """
 from __future__ import annotations
-
-import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-_LOGGER = logging.getLogger(__name__)
+from .const import CONF_FEATURES, CONF_ROSTER
+from .modules.chores.sensor import async_setup_entry as _chores_setup_entry
+from .modules.settings.sensor import async_setup_entry as _settings_setup_entry
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    _LOGGER.warning(
-        "Family Dashboard: the Chores & Rewards module is enabled but not yet "
-        "implemented - no sensor entities were created. See modules/chores/__init__.py."
-    )
+    await _settings_setup_entry(hass, entry, async_add_entities)
+
+    if any("chores" in member.get(CONF_FEATURES, []) for member in entry.data[CONF_ROSTER]):
+        await _chores_setup_entry(hass, entry, async_add_entities)

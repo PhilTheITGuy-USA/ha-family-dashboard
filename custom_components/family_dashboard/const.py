@@ -1,65 +1,214 @@
-"""Constants and the module registry for Family Dashboard.
+"""Constants and the per-member feature registry for Family Dashboard.
 
-Decisions locked in `family-hub-v2-rebuild-plan.md` (2026-07-08/10):
-- Settings/Roster is ALWAYS-ON CORE, not a toggleable module - it's the one thing every
+Decisions locked in `family-hub-v2-rebuild-plan.md` (revised 2026-07-12/13):
+- Settings/Roster is ALWAYS-ON CORE, not a toggleable feature - it's the one thing every
   other module depends on. Its platforms (`SETTINGS_PLATFORMS`) are forwarded
-  unconditionally by `__init__.py`, and it deliberately has no entry in `MODULES` below.
-- `MODULES` lists only the genuinely optional pieces the wizard's module-selection step
+  unconditionally by `__init__.py`, and it deliberately has no entry in `FEATURES` below.
+- `FEATURES` lists only the genuinely optional pieces the wizard's per-member features step
   offers: Calendar, Lists, Chores & Rewards (Meals is a planned-later addition - it should
-  slot into this same dict without touching the others).
+  slot into this same dict without touching the others). Each roster member picks their own
+  subset of these (stored as that member's own `CONF_FEATURES` list in `config_flow.py`'s
+  `confirm` step) - this is NOT a household-wide toggle, see the rebuild plan's "Wizard
+  flow" section for why (list isolation between siblings was the deciding reason).
 """
 from __future__ import annotations
 
 DOMAIN = "family_dashboard"
 
 CONF_ROSTER = "roster"
-CONF_MODULES = "modules"
+CONF_FEATURES = "features"
+CONF_HA_USER_ID = "ha_user_id"
+
+# Optional per-member birthdate (ISO date string, or None if not provided) - powers the
+# computed `calendar.family_dashboard_birthdays` overlay (modules/calendar/birthdays.py)
+# rather than depending on any external "Birthdays" integration (HA has no built-in one).
+CONF_BIRTHDATE = "birthdate"
+
+# Whole-member Disable (distinct from any single CONF_FEATURES toggle) - hides the member
+# everywhere on the generated dashboard and stops their calendar reminders, but keeps every
+# bit of their data intact and reversible. See roster.py's async_set_member_disabled/
+# async_delete_member for the Disable-vs-permanently-Delete distinction.
+CONF_DISABLED = "disabled"
 
 ROSTER_MAX_MEMBERS = 8
 
+# The standard 16 basic CSS/web color keywords (2026-07-14, replacing the earlier 10-color
+# custom palette) - explicit user request for "a basic 16 color palette" / "a standard color
+# picker", matching modules/settings/dashboard.py's new swatch-grid color picker popup
+# (replacing the old plain-text select dropdown).
 COLOR_OPTIONS = [
-    "Salmon",
-    "Blue",
-    "Green",
-    "Orange",
-    "Purple",
-    "Teal",
-    "Pink",
-    "Amber",
+    "Black",
+    "Silver",
+    "Gray",
+    "White",
+    "Maroon",
     "Red",
-    "Slate",
+    "Purple",
+    "Fuchsia",
+    "Green",
+    "Lime",
+    "Olive",
+    "Yellow",
+    "Navy",
+    "Blue",
+    "Teal",
+    "Aqua",
 ]
 
-# Always-on: forwarded for every config entry regardless of the `modules` wizard answer.
-SETTINGS_PLATFORMS = ["select", "text"]
+# Always-on: forwarded for every config entry regardless of any member's selected features.
+# "date" added for each roster member's Birthdate field (RosterBirthdateDate).
+SETTINGS_PLATFORMS = ["select", "text", "switch", "sensor", "date"]
 
-# Toggleable modules offered in the wizard's `modules` step. Each module's "platforms" list
-# is only forwarded via async_forward_entry_setups when that module's key is selected.
+# Per-member avatar (2026-07-13 feature audit): a file path under /local/family_dashboard/
+# avatars/ (frontend-servable alias for /config/www/family_dashboard/avatars/), chosen from a
+# dashboard picture-grid picker built from sensor.family_dashboard_avatars' live file list -
+# NOT a fixed enum in const.py, since the whole point is new avatar images can be dropped into
+# that folder without touching code. Same always-present-key convention as color/name.
+CONF_AVATAR = "avatar"
+
+# Seeded into /config/www/family_dashboard/avatars/ on first entry setup if that folder is
+# empty - generic starting icons (ported forward as concept from the legacy
+# person-solid.png/people-group-solid.png set), not tied to any specific roster member.
+DEFAULT_AVATAR_FILENAMES = ["person-solid.png", "people-group-solid.png"]
+
+# Toggleable features offered per roster member in the wizard's `features` step. Each
+# feature's "platforms" list is only forwarded via async_forward_entry_setups when at least
+# one roster member has that feature key in their own `features` list.
 #
 # "implemented" is a SCAFFOLD-STAGE marker, not a permanent field: False means the
-# top-level platform file(s) for that module are currently stubs that add zero entities
+# top-level platform file(s) for that feature are currently stubs that add zero entities
 # (see modules/<key>/ for what still needs building). Remove the key entirely once a
-# module is genuinely built out - don't leave stale "implemented: True" markers lying
+# feature is genuinely built out - don't leave stale "implemented: True" markers lying
 # around as scope creeps.
-MODULES: dict[str, dict] = {
+FEATURES: dict[str, dict] = {
     "calendar": {
+        # "select"/"text"/"switch"/"datetime"/"date" are all HOUSEHOLD-level scratch/display
+        # entities (view-granularity selector, Birthdays/Holidays toggles, Add Event popup
+        # fields) - forwarded once if ANY member has "calendar" enabled, same mechanism as
+        # per-member platforms, just not per-member entities within them. See
+        # modules/calendar/{select,text,switch,datetime,date}.py.
         "name": "Calendar",
-        "platforms": ["calendar"],
+        "platforms": ["calendar", "select", "text", "switch", "datetime", "date"],
         "default_selected": True,
-        "implemented": False,
+        "implemented": True,
     },
     "lists": {
         "name": "Lists",
         "platforms": ["todo"],
         "default_selected": True,
-        "implemented": False,
+        "implemented": True,
     },
     "chores": {
         "name": "Chores & Rewards",
-        "platforms": ["sensor", "button"],
+        # "select"/"number" added for live Add/Modify/Delete of chores/rewards from the
+        # Settings dashboard (points/cost, frequency, assigned-to fields) - see
+        # modules/chores/select.py's and modules/chores/number.py's own module docstrings.
+        "platforms": ["sensor", "button", "text", "binary_sensor", "select", "number"],
         "default_selected": True,
-        "implemented": False,
+        "implemented": True,
     },
 }
 
-DEFAULT_SELECTED_MODULES = [key for key, mod in MODULES.items() if mod["default_selected"]]
+# Default pre-checked selection for every roster member's row in the `features` step -
+# every member starts with all three features on, same least-surprise default the old
+# household-wide step used, just applied per-row now instead of once.
+DEFAULT_SELECTED_FEATURES = [key for key, feat in FEATURES.items() if feat["default_selected"]]
+
+CONF_LIST_PRESETS = "list_presets"
+
+# Preset To-do lists offered per roster member who opted into "lists" - from the legacy
+# ha-family-hub-setup-plan.md preset table (still a good list). Unlike FEATURES, there is no
+# default_selected here - the `lists` config-flow step defaults every row to an empty
+# selection (see config_flow.py's build_lists_schema), since which specific lists a person
+# wants is an affirmative choice, not an on-by-default capability.
+LIST_PRESETS: dict[str, dict] = {
+    "to_do": {"name": "To-Do", "icon": "mdi:check-circle-outline"},
+    "shopping": {"name": "Shopping", "icon": "mdi:cart"},
+    "packing": {"name": "Packing", "icon": "mdi:bag-suitcase"},
+    "gift_ideas": {"name": "Gift Ideas", "icon": "mdi:gift"},
+    "custom": {"name": "Custom", "icon": "mdi:clipboard-text"},
+}
+
+# Per-member calendar mapping (config_flow.py's `calendar` step): which existing calendar.*
+# entity this member's own proxy CalendarEntity forwards to, and which notify.* entity (if
+# any) the reminder engine should push to for their events. Both None if unmapped/skipped -
+# same always-present-key convention as ha_user_id/list_presets.
+CONF_CALENDAR_ENTITY_ID = "calendar_entity_id"
+CONF_NOTIFY_ENTITY_ID = "notify_entity_id"
+
+# Household-scoped (top-level entry.data, NOT per-member, unlike everything else in this
+# section): which roster member's mapped calendar (if any) doubles as the shared Family
+# calendar shown on every dashboard viewer-bucket's Calendar tab - a checkbox on that
+# member's row in the `calendar` wizard step, not a separate selector/step. member_id or
+# None; at most one member may have this set (config_flow.py validates it).
+CONF_FAMILY_CALENDAR_MEMBER_ID = "family_calendar_member_id"
+
+# Calendar view-granularity selector (2026-07-13 feature audit, ported from legacy
+# input_select.calendar_view) - household-scoped, cycled via a nav pill calling
+# select.select_next, mapped to week-planner-card's days/startingDay by
+# modules/calendar/dashboard.py.
+CALENDAR_VIEW_OPTIONS = ["Today", "Tomorrow", "Week", "Biweek", "Month"]
+CALENDAR_VIEW_DEFAULT = "Week"
+
+# Add Event popup's reminder lead-time checkboxes (2026-07-13 feature audit - "Week/Day/Hour"
+# per Phillip's own wording, matching modules/calendar/reminders.py's multi-tag-capable regex
+# rather than the legacy's single combined-minutes number). Each checked option appends its
+# own independent [[reminder:...]] tag.
+REMINDER_LEAD_TIMES: dict[str, str] = {
+    "week": "7d",
+    "day": "1d",
+    "hour": "1h",
+}
+
+# Chores & Rewards - top-level entry.data lists (NOT per-roster-member fields, unlike
+# everything above): a member can have many chores/rewards, each pointing back at them via
+# "assigned_to" (a member_id). Gated on at least one roster member having "chores" in their
+# own features list - Rewards has no separate feature toggle, it's part of the combined
+# "Chores & Rewards" feature. See config_flow.py's async_step_add_chore/add_reward for how
+# these lists get built (a repeat-until-done loop, not a single wizard field) and
+# modules/chores/ for the entities built from them.
+CONF_CHORES = "chores"
+CONF_REWARDS = "rewards"
+
+# Display label only in v1 - not enforced scheduling (no once-per-day/week claim-locking).
+# A chore can be claimed and re-claimed any time; claiming always starts a fresh cycle
+# regardless of prior status. See modules/chores/__init__.py for the reasoning.
+CHORE_FREQUENCIES: dict[str, str] = {
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "one_time": "One-time",
+}
+
+# Hex values for each COLOR_OPTIONS name - the standard 16 basic CSS/web color keyword
+# values, needed anywhere a generated dashboard card wants an actual color (e.g.
+# week-planner-card's per-calendar `color:`) rather than relying on the name string itself
+# being a valid CSS value.
+ROSTER_COLOR_HEX: dict[str, str] = {
+    "Black": "#000000",
+    "Silver": "#C0C0C0",
+    "Gray": "#808080",
+    "White": "#FFFFFF",
+    "Maroon": "#800000",
+    "Red": "#FF0000",
+    "Purple": "#800080",
+    "Fuchsia": "#FF00FF",
+    "Green": "#008000",
+    "Lime": "#00FF00",
+    "Olive": "#808000",
+    "Yellow": "#FFFF00",
+    "Navy": "#000080",
+    "Blue": "#0000FF",
+    "Teal": "#008080",
+    "Aqua": "#00FFFF",
+}
+
+
+def roster_color_hex_js_map() -> str:
+    """`ROSTER_COLOR_HEX` as a JS object-literal string, for any dashboard template (button-
+    card `[[[ ]]]`, config-template-card `${ }`) that needs to look up a roster color's hex
+    value from a LIVE entity state at render time (e.g. a `select.family_dashboard_<id>_color`
+    state) rather than baking in whatever the color was at dashboard-generation time - matches
+    the legacy `family-hub.yaml`'s own inline `var m={...}` toggle-pill color map, single
+    source of truth here instead of copied into every template that needs it."""
+    pairs = ", ".join(f"'{name}': '{hex_}'" for name, hex_ in ROSTER_COLOR_HEX.items())
+    return "{" + pairs + "}"
