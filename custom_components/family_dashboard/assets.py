@@ -9,15 +9,62 @@ Idempotent per-file, not per-run: the theme is integration-owned styling, so it'
 re-copied (keeps it in sync if the shipped theme changes between versions); avatars and the
 background image are user-customizable content once seeded (Phillip might add/replace photos),
 so those are only copied if the destination doesn't exist yet - never overwritten.
+
+CRITICAL, live-verified via a genuinely fresh install (not assumed): HA's own `/local` static
+route (serving `/config/www/`) is only registered if `hass.config.path("www")` already exists
+at the moment `frontend`'s own `async_setup` runs - see that component's own source, which
+does `if await hass.async_add_executor_job(os.path.isdir, local): static_paths_configs.append(
+StaticPathConfig("/local", local, ...))`, checked exactly once at HA startup. On a fresh
+install, `www/` doesn't exist yet at that point - THIS module creates it, but only later
+(during the config flow's `avatars` step or this entry's own setup, both well after HA has
+already booted). Without a fix, every `/local/family_dashboard/*` URL (avatars, background,
+and critically the dashboard strategy JS - `dashboard/register.py`'s
+`async_register_strategy_resource`) 404s for the rest of that HA process's life, no matter how
+many files get seeded, until a manual restart - exactly the "silently needs a restart" failure
+mode this whole project was rebuilt to avoid. `_ensure_local_static_path` below registers our
+own dedicated static path directly instead of relying on that boot-time check, so assets are
+servable immediately regardless of whether `www/` existed before HA started.
 """
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
+from .const import DOMAIN
+
 _PACKAGE_DIR = Path(__file__).parent
+_STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_local_static_path_registered"
+
+# Vendored third-party Lovelace cards the generated dashboard's card configs depend on (see
+# `www/vendor/ATTRIBUTIONS.md` for source/version/license) - bundled directly rather than
+# requiring a separate manual HACS install, same "ship it, no manual step" reasoning as the
+# theme/avatars/strategy JS above. `dashboard/register.py`'s `async_register_strategy_resource`
+# imports this list to register each as a Lovelace resource alongside our own strategy script.
+VENDOR_RESOURCE_URLS = [
+    "/local/family_dashboard/vendor/button-card.js",
+    "/local/family_dashboard/vendor/bubble-card.js",
+    "/local/family_dashboard/vendor/config-template-card.js",
+    "/local/family_dashboard/vendor/week-planner-card.js",
+]
+
+
+async def _ensure_local_static_path(hass: HomeAssistant, target_dir: Path) -> None:
+    """Registers `/local/family_dashboard` -> `target_dir` directly via `hass.http`, bypassing
+    HA's own boot-time-only `/local` registration (see this module's docstring). Guarded by a
+    `hass.data` flag to run only once per HA process - `async_register_static_paths` has no
+    idempotency of its own (calling it again would just pile up a redundant duplicate route),
+    and this is called on every `async_seed_assets` pass (initial wizard AND every entry
+    setup/reload), not just the first.
+    """
+    if hass.data.get(_STATIC_PATH_REGISTERED_KEY):
+        return
+    hass.data[_STATIC_PATH_REGISTERED_KEY] = True
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig("/local/family_dashboard", str(target_dir), True)]
+    )
 
 
 def _seed_sync(hass: HomeAssistant) -> list[str]:
@@ -51,6 +98,17 @@ def _seed_sync(hass: HomeAssistant) -> list[str]:
         strategy_dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(strategy_src, strategy_dest)
 
+    # Vendored third-party cards - same "always re-copy, integration-owned" treatment as the
+    # strategy JS above (a shipped version bump should take effect on next restart, not be
+    # silently stuck on whatever copy happened to exist already).
+    vendor_dest_dir = config_dir / "www" / "family_dashboard" / "vendor"
+    vendor_src_dir = _PACKAGE_DIR / "www" / "vendor"
+    if vendor_src_dir.is_dir():
+        vendor_dest_dir.mkdir(parents=True, exist_ok=True)
+        for src in vendor_src_dir.iterdir():
+            if src.is_file():
+                shutil.copyfile(src, vendor_dest_dir / src.name)
+
     return [f"/local/family_dashboard/avatars/{f.name}" for f in sorted(avatars_dest.glob("*.png"))]
 
 
@@ -64,4 +122,7 @@ async def async_seed_assets(hass: HomeAssistant) -> list[str]:
     live, not assumed, via a real `pytest` run that flaked between passing and failing
     depending on that race).
     """
-    return await hass.async_add_executor_job(_seed_sync, hass)
+    avatar_files = await hass.async_add_executor_job(_seed_sync, hass)
+    target_dir = Path(hass.config.config_dir) / "www" / "family_dashboard"
+    await _ensure_local_static_path(hass, target_dir)
+    return avatar_files

@@ -54,6 +54,8 @@ from homeassistant.components.lovelace import resources as lovelace_resources
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from ..assets import VENDOR_RESOURCE_URLS
+
 DASHBOARD_URL_PATH = "family-dashboard"
 DASHBOARD_TITLE = "Family Dashboard"
 DASHBOARD_ICON = "mdi:home-heart"
@@ -145,11 +147,17 @@ async def async_register_dashboard(
 
 
 async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
-    """Registers `family-dashboard-strategy.js` (seeded to `/config/www/family_dashboard/` by
-    `assets.py`, same "ship it with the integration, copy on first run" pattern as the theme/
-    background/avatars) as a Lovelace resource, so the frontend actually loads it and
-    `customElements.define('ll-strategy-dashboard-family-dashboard', ...)` runs before the
-    dashboard's own `"strategy"` config tries to resolve that tag.
+    """Registers `family-dashboard-strategy.js` PLUS every vendored third-party card
+    (`assets.VENDOR_RESOURCE_URLS` - button-card/bubble-card/config-template-card/
+    week-planner-card, seeded to `/config/www/family_dashboard/` by `assets.py`, same "ship it
+    with the integration, copy on first run" pattern as the theme/background/avatars) as
+    Lovelace resources, so the frontend actually loads them and each one's `customElements.define(...)`
+    runs before any generated card config tries to resolve that `custom:...` tag. Without this,
+    the generated dashboard's card configs (every module's `dashboard.py` uses one or more of
+    these) show "Configuration error" for every affected card - live-verified via a genuinely
+    fresh install, not assumed: bundling the JS alone isn't enough, HA only loads a `custom:`
+    element if its script is ALSO a registered Lovelace resource, exactly like the strategy
+    script itself already needed.
 
     Uses `_resources_collection` (the REAL, live collection - see its own docstring for why a
     second instance doesn't work here, unlike `async_register_dashboard`'s dashboard
@@ -164,9 +172,8 @@ async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
     # `_async_ensure_loaded()` internally - is called here anyway as a cheap, harmless
     # guarantee rather than assuming that ordering always holds.
     await collection.async_get_info()
-    existing = [item for item in collection.async_items() if item["url"] == STRATEGY_RESOURCE_URL]
-    if existing:
-        return True
-
-    await collection.async_create_item({"res_type": "module", "url": STRATEGY_RESOURCE_URL})
+    existing_urls = {item["url"] for item in collection.async_items()}
+    for url in [STRATEGY_RESOURCE_URL, *VENDOR_RESOURCE_URLS]:
+        if url not in existing_urls:
+            await collection.async_create_item({"res_type": "module", "url": url})
     return True

@@ -164,16 +164,27 @@ class _Bucket:
     member: dict | None
 
 
-async def _build_viewer_buckets(hass: HomeAssistant, roster: list[dict]) -> list[_Bucket]:
-    linked_members = [m for m in roster if m.get(CONF_HA_USER_ID)]
-    linked_user_ids = {m[CONF_HA_USER_ID] for m in linked_members}
-
+async def async_compute_kiosk_user_ids(hass: HomeAssistant, roster: list[dict]) -> frozenset[str]:
+    """The Kiosk bucket's user-ID set: every active, non-system-generated HA user not already
+    linked to a roster member (see this module's own docstring's "Kiosk bucket" paragraph).
+    Factored out of `_build_viewer_buckets` so `user_watch.py` can cheaply recompute just this
+    set to check whether an HA user-registry change actually affects the dashboard, without
+    rebuilding the whole multi-view config to find out. Returns a `frozenset` (hashable,
+    stable equality) rather than a list, since the only thing callers outside this module do
+    with it is compare it against a previous snapshot.
+    """
+    linked_user_ids = {m[CONF_HA_USER_ID] for m in roster if m.get(CONF_HA_USER_ID)}
     users = await hass.auth.async_get_users()
-    kiosk_user_ids = [
+    return frozenset(
         user.id
         for user in users
         if user.is_active and not user.system_generated and user.id not in linked_user_ids
-    ]
+    )
+
+
+async def _build_viewer_buckets(hass: HomeAssistant, roster: list[dict]) -> list[_Bucket]:
+    linked_members = [m for m in roster if m.get(CONF_HA_USER_ID)]
+    kiosk_user_ids = list(await async_compute_kiosk_user_ids(hass, roster))
 
     buckets = []
     if kiosk_user_ids:

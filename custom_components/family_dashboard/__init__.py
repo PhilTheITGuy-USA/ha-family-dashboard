@@ -29,6 +29,7 @@ from .dashboard.register import async_register_dashboard, async_register_strateg
 from .dashboard.registry import async_build_dashboard_config
 from .holidays_setup import async_ensure_default_holidays
 from .unmapped_users import async_check_unmapped_users
+from .user_watch import async_register_user_change_listener
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +88,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     dashboard_config = await async_build_dashboard_config(hass, entry)
     await async_register_dashboard(hass, entry, dashboard_config)
 
+    # Keeps the Kiosk bucket from going stale if an HA user account is added/removed/changed
+    # after this setup pass - see user_watch.py's module docstring for the live-verified gap
+    # this closes (a new, unlinked user saw a blank dashboard until a manual reload).
+    hass.data[DOMAIN][entry.entry_id][
+        "user_change_unsub"
+    ] = await async_register_user_change_listener(hass, entry)
+
     # Repair Issue per active, non-system HA user not linked to any roster member - see
     # unmapped_users.py's module docstring for why this doesn't need its own "ignore list"
     # (HA's own Repairs "Ignore" action already persists across every future call here).
@@ -107,4 +115,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data = hass.data[DOMAIN].pop(entry.entry_id, {})
         if reminder_unsub := domain_data.get("reminder_unsub"):
             reminder_unsub()
+        if user_change_unsub := domain_data.get("user_change_unsub"):
+            user_change_unsub()
     return unloaded
