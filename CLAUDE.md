@@ -103,7 +103,13 @@ confirm the resulting entities/config entry via `GET /api/states` /
     per-viewer-bucket *content* swapped in client-side by a custom dashboard strategy
     (`www/family-dashboard-strategy.js`) rather than by generating differently-named views —
     read this before touching dashboard generation, the earlier per-person-named-views
-    design was deliberately reverted.
+    design was deliberately reverted. `dashboard/register.py` does the actual storage-mode
+    dashboard/resource registration; its module docstring documents three corrections found
+    by reading HA core source directly (no public API reaches the real `DashboardsCollection`;
+    `hass.data` stores dashboards/resources in different shapes across HA versions and both
+    must be handled; `frontend.async_register_built_in_panel`'s kwargs differ by version too)
+    — reread it before touching dashboard *registration* (as opposed to dashboard *content*,
+    which is `registry.py`'s concern).
   - `assets.py` — seeds default avatars/background/theme from the package's own `www/`/
     `themes/` into `/config/www/family_dashboard/`/`/config/themes/` on first setup (HA
     can't serve files from inside a custom component's package directory directly).
