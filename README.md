@@ -1,4 +1,5 @@
 # Family Dashboard
+📖 **[Full Setup Guide → SETUP.md](./SETUP.md)**
 
 A single Home Assistant custom integration: install via HACS, run one wizard, get a
 turnkey family command center - Calendar, Lists, Chores & Rewards, and Settings/Roster - with

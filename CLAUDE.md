@@ -57,6 +57,13 @@ docker run --rm -v "/c/ha-test-bench:/app" -w /app python:3.14-slim \
 (On Windows/Git Bash, prefix with `MSYS_NO_PATHCONV=1` so `-w /app` isn't mangled into a
 Windows path.)
 
+`requirements_test.txt` pins `holidays`/`babel` explicitly alongside
+`pytest-homeassistant-custom-component` — not incidental version pins, but requirements of
+HA's own built-in "Holiday" integration, which `holidays_setup.py` drives the real config flow
+of under test. The disposable pytest container doesn't auto-install a component's own
+manifest-declared requirements the way a real running HA instance does, so anything exercising
+another integration's flow under test needs its requirements listed here too.
+
 ## Live-instance validation (do not skip)
 
 Per the project brief: an automated pytest pass is necessary but explicitly **not
@@ -115,9 +122,45 @@ confirm the resulting entities/config entry via `GET /api/states` /
     can't serve files from inside a custom component's package directory directly).
   - `migration/` — best-effort import from a prior `ha-family-hub` install; currently a
     stub (`async_detect_legacy_install` always returns `None`), not a v1 gate.
-- `tests/` — pytest-homeassistant-custom-component suite, one file per module/flow/concern
-  (`test_config_flow.py`, `test_<module>_module.py`, `test_dashboard.py`, `test_assets.py`,
-  `test_util.py`).
+  - `holidays_setup.py` — one-time auto-provisioning of HA's own built-in "Holiday"
+    integration for the US and Philippines on first setup (computes holidays live from the
+    `holidays` PyPI package, so it's not an ongoing sync). Idempotent by checking existing
+    Holiday config entries before starting a flow, and best-effort: failures are logged and
+    swallowed rather than blocking `async_setup_entry`, since creating another integration's
+    config entry is outside this integration's own domain.
+  - `roster.py` — shared helpers for mutating an *existing* member's features/calendar/
+    notify mapping from live Settings-tab entities and reloading the entry (the Options
+    Flow's own `async_step_add_confirm` is the only other path that writes
+    `entry.data["roster"]`, and it's for adding a brand-new member). Feature-toggle changes
+    go through here specifically because they need the `hidden_by` treatment on top of the
+    plain mutate+reload.
+  - `user_watch.py` / `unmapped_users.py` — keep the generated dashboard's Kiosk bucket
+    correct as HA's user registry changes after initial setup. `user_watch.py` listens for
+    HA's own `user_added`/`user_updated`/`user_removed` auth-manager bus events and reloads
+    the entry (debounced) only when the computed Kiosk-bucket membership actually changes.
+    `unmapped_users.py` raises an HA Repair Issue per active, non-system HA user not linked
+    to any roster member — dismissing it in the Repairs UI is a real permanent per-user
+    opt-out (confirmed against `IssueRegistry.async_get_or_create` behavior), not just a
+    reminder.
+  - `services.yaml` — custom services the dashboard's buttons/popups call instead of acting
+    on entities directly (e.g. `deny_task`/`adjust_points`/`delete_task`/`delete_member`,
+    the PIN-entry/parent-mode-unlock services, `add_event`/`add_chore`/`add_reward` for the
+    scratch-field "Add" popups). Each module registers and handles its own services in its
+    own `async_setup_entry` — this file only declares the schemas HA's service-call UI and
+    validation use.
+  - `www/vendor/` — vendored, unmodified third-party Lovelace cards (`button-card`,
+    `bubble-card`, `config-template-card`, `week-planner-card`) the generated dashboard
+    depends on, bundled so the dashboard works with no separate manual HACS install (see
+    `ATTRIBUTIONS.md` for exact pinned versions/licenses). `week-planner-card` in particular
+    is pinned to the exact version `modules/calendar/dashboard.py` was built and validated
+    against — don't bump it without re-reading that module's docstring on its
+    filter-semantics dependency on that version's internals.
+- `tests/` — pytest-homeassistant-custom-component suite, one file per module/flow/concern:
+  `test_config_flow.py`, `test_dashboard.py`, `test_assets.py`, `test_util.py`,
+  `test_roster.py`, `test_unmapped_users.py`, `test_notify_resolution.py`,
+  `test_holidays_setup.py`, and per-module `test_<module>_module.py` plus targeted
+  `test_<module>_<concern>.py` files for behavior that doesn't fit the main module test file
+  (e.g. `test_calendar_extras.py`, `test_birthdays_calendar.py`, `test_chores_crud.py`).
 - `claude-code-kickoff.md` — where to start; links to the full planning docs (build brief,
   architecture/rebuild plan, wizard flowchart) at
   `C:\Users\philt\CLAUDE_FOLDER\Family Dashboard Mockups\`. Those docs are living and
