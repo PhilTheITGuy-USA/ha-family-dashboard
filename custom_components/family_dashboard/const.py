@@ -32,27 +32,29 @@ CONF_DISABLED = "disabled"
 
 ROSTER_MAX_MEMBERS = 8
 
-# The standard 16 basic CSS/web color keywords (2026-07-14, replacing the earlier 10-color
-# custom palette) - explicit user request for "a basic 16 color palette" / "a standard color
-# picker", matching modules/settings/dashboard.py's new swatch-grid color picker popup
-# (replacing the old plain-text select dropdown).
+# A 16-color UI design system palette (2026-07-18, replacing the earlier 16 basic CSS/web
+# color keywords) - explicit user request after walking through setup and finding the CSS
+# keyword palette's choices "just not good". Named/purposed per a design-system reference
+# table (e.g. "Amber / Yellow" for pending statuses, "Emerald / Dark Green" for high-contrast
+# success states) rather than raw CSS keywords - see ROSTER_COLOR_HEX below for the matching
+# hex values. Order here is the display order of modules/settings/dashboard.py's swatch grid.
 COLOR_OPTIONS = [
-    "Black",
-    "Silver",
-    "Gray",
+    "Slate / Dark",
     "White",
-    "Maroon",
+    "Light Gray",
+    "Medium Gray",
     "Red",
-    "Purple",
-    "Fuchsia",
+    "Orange",
+    "Amber / Yellow",
     "Green",
-    "Lime",
-    "Olive",
-    "Yellow",
-    "Navy",
+    "Emerald / Dark Green",
+    "Cyan / Teal",
+    "Light Blue / Sky",
     "Blue",
-    "Teal",
-    "Aqua",
+    "Indigo",
+    "Purple",
+    "Pink",
+    "Rose / Magenta",
 ]
 
 # Always-on: forwarded for every config entry regardless of any member's selected features.
@@ -179,27 +181,27 @@ CHORE_FREQUENCIES: dict[str, str] = {
     "one_time": "One-time",
 }
 
-# Hex values for each COLOR_OPTIONS name - the standard 16 basic CSS/web color keyword
-# values, needed anywhere a generated dashboard card wants an actual color (e.g.
-# week-planner-card's per-calendar `color:`) rather than relying on the name string itself
-# being a valid CSS value.
+# Hex values for each COLOR_OPTIONS name - needed anywhere a generated dashboard card wants
+# an actual color (e.g. week-planner-card's per-calendar `color:`) rather than relying on the
+# name string itself being a valid CSS value (several of these names, e.g. "Amber / Yellow",
+# aren't).
 ROSTER_COLOR_HEX: dict[str, str] = {
-    "Black": "#000000",
-    "Silver": "#C0C0C0",
-    "Gray": "#808080",
+    "Slate / Dark": "#1E293B",
     "White": "#FFFFFF",
-    "Maroon": "#800000",
-    "Red": "#FF0000",
-    "Purple": "#800080",
-    "Fuchsia": "#FF00FF",
-    "Green": "#008000",
-    "Lime": "#00FF00",
-    "Olive": "#808000",
-    "Yellow": "#FFFF00",
-    "Navy": "#000080",
-    "Blue": "#0000FF",
-    "Teal": "#008080",
-    "Aqua": "#00FFFF",
+    "Light Gray": "#F1F5F9",
+    "Medium Gray": "#94A3B8",
+    "Red": "#EF4444",
+    "Orange": "#F97316",
+    "Amber / Yellow": "#F59E0B",
+    "Green": "#10B981",
+    "Emerald / Dark Green": "#047857",
+    "Cyan / Teal": "#06B6D4",
+    "Light Blue / Sky": "#38BDF8",
+    "Blue": "#3B82F6",
+    "Indigo": "#6366F1",
+    "Purple": "#A855F7",
+    "Pink": "#EC4899",
+    "Rose / Magenta": "#F43F5E",
 }
 
 

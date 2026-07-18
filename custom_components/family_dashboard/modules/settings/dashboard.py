@@ -177,8 +177,16 @@ def _color_swatch_card(color_name: str, color_entity_id: str) -> dict:
             ],
             "name": [
                 {"color": _contrast_text_color(hex_value)},
-                {"font-size": "12px"},
+                {"font-size": "11px"},
                 {"font-weight": "700"},
+                # Several palette names are two words joined by "/" (e.g. "Emerald / Dark
+                # Green") - too long for a fixed 4-wide swatch cell at the old 12px/nowrap
+                # styling, which button-card silently ellipsis-truncated (only caught by
+                # actually rendering this popup, not from the config JSON shape). Wrap
+                # instead of truncate.
+                {"white-space": "normal"},
+                {"line-height": "1.2"},
+                {"padding": "0 4px"},
             ],
         },
     }
