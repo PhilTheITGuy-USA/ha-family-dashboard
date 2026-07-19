@@ -138,13 +138,6 @@ LIST_PRESETS: dict[str, dict] = {
 CONF_CALENDAR_ENTITY_ID = "calendar_entity_id"
 CONF_NOTIFY_ENTITY_ID = "notify_entity_id"
 
-# Household-scoped (top-level entry.data, NOT per-member, unlike everything else in this
-# section): which roster member's mapped calendar (if any) doubles as the shared Family
-# calendar shown on every dashboard viewer-bucket's Calendar tab - a checkbox on that
-# member's row in the `calendar` wizard step, not a separate selector/step. member_id or
-# None; at most one member may have this set (config_flow.py validates it).
-CONF_FAMILY_CALENDAR_MEMBER_ID = "family_calendar_member_id"
-
 # Calendar view-granularity selector (2026-07-13 feature audit, ported from legacy
 # input_select.calendar_view) - household-scoped, cycled via a nav pill calling
 # select.select_next, mapped to week-planner-card's days/startingDay by

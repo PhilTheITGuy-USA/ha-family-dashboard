@@ -21,11 +21,19 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from ...const import CONF_ROSTER, DOMAIN
 
 
+BIRTHDATE_SCRATCH_UNIQUE_ID = "birthdate_scratch"
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     roster = entry.data[CONF_ROSTER]
-    async_add_entities(RosterNameText(entry, member) for member in roster)
+    async_add_entities(
+        [
+            *(RosterNameText(entry, member) for member in roster),
+            _BirthdateScratchText(entry),
+        ]
+    )
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service("delete_member", {}, "async_delete_member")
@@ -78,3 +86,38 @@ class RosterNameText(TextEntity, RestoreEntity):
         from ... import roster
 
         await roster.async_delete_member(self.hass, self._entry, self._member_id)
+
+
+class _BirthdateScratchText(TextEntity):
+    """Household-scoped (one, not per-member) scratch field for the Settings tab's
+    birthdate-edit popup (`modules/settings/dashboard.py`'s `_birthdate_edit_popup`) - the
+    user types a DD/MM/YYYY birthdate here, then taps Save, which calls
+    `family_dashboard.set_birthdate` targeted at the specific member's own
+    `RosterBirthdateDate` entity (see `modules/settings/date.py`); that service reads THIS
+    field, converts/validates via `util.ddmmyyyy_to_iso`, and clears it back to "" afterward.
+    Deliberately NOT `RestoreEntity` - same "never let a stale draft linger" reasoning as the
+    Add Event popup's own scratch text fields (`modules/calendar/text.py`).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Birthdate Entry"
+    _attr_icon = "mdi:cake-variant"
+    _attr_native_max = 10
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{BIRTHDATE_SCRATCH_UNIQUE_ID}"
+        self._attr_native_value = ""
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    async def async_set_value(self, value: str) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()

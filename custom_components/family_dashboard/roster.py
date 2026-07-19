@@ -40,7 +40,6 @@ from .const import (
     CONF_CALENDAR_ENTITY_ID,
     CONF_CHORES,
     CONF_DISABLED,
-    CONF_FAMILY_CALENDAR_MEMBER_ID,
     CONF_FEATURES,
     CONF_NOTIFY_ENTITY_ID,
     CONF_REWARDS,
@@ -177,12 +176,12 @@ async def async_delete_member(hass: HomeAssistant, entry: ConfigEntry, member_id
     """Permanently removes this member: every entity they own is genuinely removed from the
     registry (not hidden - there's nothing to restore to, same reasoning
     `modules/chores/crud.py`'s own chore/reward deletion gives), the roster entry itself is
-    dropped, any chore/reward assigned to them falls back to Unassigned (`assigned_to: None`,
-    the same permissive convention `modules/chores/crud.py`'s `member_display_name`/
+    dropped, and any chore/reward assigned to them falls back to Unassigned (`assigned_to:
+    None`, the same permissive convention `modules/chores/crud.py`'s `member_display_name`/
     `resolve_assigned_to` already use for a stale/missing member_id - the item itself is kept,
-    it isn't "this member's data"), and `CONF_FAMILY_CALENDAR_MEMBER_ID` is cleared if it
-    pointed at them (otherwise a dangling reference lingers forever - `const.py`'s own
-    docstring notes no other code path ever cleans this up).
+    it isn't "this member's data"). The shared Family calendar (if any) is unaffected by
+    member deletion - it's auto-detected by calendar name, not tied to any roster member (see
+    `modules/calendar/dashboard.py`'s `_family_calendar_entity`).
 
     The member's linked HA user account (if any) is left completely untouched - only the
     roster record disappears, so on the next reload `dashboard/registry.py`'s bucket
@@ -221,9 +220,6 @@ async def async_delete_member(hass: HomeAssistant, entry: ConfigEntry, member_id
         {**r, "assigned_to": None} if r["assigned_to"] == member_id else r
         for r in entry.data.get(CONF_REWARDS, [])
     ]
-    family_calendar_member_id = entry.data.get(CONF_FAMILY_CALENDAR_MEMBER_ID)
-    if family_calendar_member_id == member_id:
-        family_calendar_member_id = None
 
     hass.config_entries.async_update_entry(
         entry,
@@ -232,7 +228,6 @@ async def async_delete_member(hass: HomeAssistant, entry: ConfigEntry, member_id
             CONF_ROSTER: roster,
             CONF_CHORES: chores,
             CONF_REWARDS: rewards,
-            CONF_FAMILY_CALENDAR_MEMBER_ID: family_calendar_member_id,
         },
     )
     await hass.config_entries.async_reload(entry.entry_id)

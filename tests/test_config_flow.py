@@ -1,7 +1,12 @@
 """Tests for the config flow:
-user (roster) -> colors -> features -> link_users
-  -> [calendar or calendar_none_found, only if "calendar" selected]
-  -> [lists, only if "lists" selected] -> confirm.
+user (roster, once) -> per roster member: colors -> avatars -> birthdates -> features ->
+link_users -> [calendar or calendar_none_found, only if "calendar" selected] -> [lists, only
+if "lists" selected] -> (next member, or once everyone's done) -> [add_chore/add_reward, only
+if "chores" selected by anyone] -> confirm.
+
+Every multi-field step is one screen per roster member (2026-07-18 wizard redesign) - so a
+2-member roster submits `color_0`/`avatar_0`/etc. TWICE, once per member's own turn through
+the loop, not once with `_0`/`_1` fields for both members in a single flat form.
 """
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.components.calendar import CalendarEntity
@@ -49,54 +54,71 @@ async def test_full_flow_creates_entry(hass):
     )
     assert result["step_id"] == "colors"
 
+    # --- Ada's own turn through the per-member loop ---
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"color_0": "Blue", "color_1": "Green"}
+        result["flow_id"], {"color_0": "Blue"}
     )
     assert result["step_id"] == "avatars"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {
-            "avatar_0": "/local/family_dashboard/avatars/person-solid.png",
-            "avatar_1": "/local/family_dashboard/avatars/people-group-solid.png",
-        },
+        {"avatar_0": "/local/family_dashboard/avatars/person-solid.png"},
     )
     assert result["step_id"] == "birthdates"
 
-    # Ada gets a birthdate; Grace's field is omitted entirely (skipped - optional).
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"birthdate_0": "2015-06-21"}
+        result["flow_id"], {"birthdate_0": "21/06/2015"}
     )
     assert result["step_id"] == "features"
 
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"features_0": ["calendar", "lists"], "features_1": ["chores"]}
+        result["flow_id"], {"features_0": ["calendar", "lists"]}
     )
     assert result["step_id"] == "link_users"
 
-    # Ada is linked to a real HA user account; Grace's field is omitted entirely (skipped).
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"ha_user_0": ada_account.id}
     )
-    # Only Ada selected "calendar" - the calendar step's fields are scoped to just her
-    # (index 0 within the filtered subset, not the full roster).
+    # Ada selected "calendar" - her own calendar screen shows next.
     assert result["step_id"] == "calendar"
 
-    # Map Ada's calendar, leave the notify field blank (skipped), and flag it as the shared
-    # Family calendar.
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"calendar_0": "calendar.fake_calendar", "family_calendar_0": True},
+        result["flow_id"], {"calendar_0": "calendar.fake_calendar"}
     )
-    # Only Ada selected "lists" - the lists step's fields are scoped to just her (index 0
-    # within the filtered subset, not the full roster), and it's shown at all only because
-    # at least one member opted in.
+    # Ada also selected "lists" - her own lists screen shows next.
     assert result["step_id"] == "lists"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"presets_0": ["shopping", "to_do"]}
     )
-    # Only Grace selected "chores" - the add_chore/add_reward loops are scoped to just her.
+    # Ada's chain is done - loops back to Colors, now for Grace.
+    assert result["step_id"] == "colors"
+
+    # --- Grace's own turn through the per-member loop ---
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"color_0": "Green"}
+    )
+    assert result["step_id"] == "avatars"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"avatar_0": "/local/family_dashboard/avatars/people-group-solid.png"},
+    )
+    assert result["step_id"] == "birthdates"
+
+    # Grace's birthdate field is omitted entirely (skipped - optional).
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "features"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"features_0": ["chores"]}
+    )
+    assert result["step_id"] == "link_users"
+
+    # Grace's link-user field is omitted entirely (skipped).
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    # Grace selected neither "calendar" nor "lists" - both screens skipped for her. Every
+    # member is done now, and Grace selected "chores" - straight to the shared chores loop.
     assert result["step_id"] == "add_chore"
 
     result = await hass.config_entries.flow.async_configure(
@@ -165,54 +187,6 @@ async def test_full_flow_creates_entry(hass):
     assert data["rewards"] == [
         {"reward_id": "movie_night", "name": "Movie Night", "cost": 30, "assigned_to": "grace"}
     ]
-    assert data["family_calendar_member_id"] == "ada"
-
-
-async def test_family_calendar_multiple_checked_shows_error(hass):
-    """More than one member's mapping flagged as the shared Family calendar - the calendar
-    step re-shows itself with an error rather than silently picking one."""
-    await _register_fake_calendar(hass)
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"roster": "Ada, Grace"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"color_0": "Blue", "color_1": "Green"}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})  # avatars, defaults
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})  # birthdates, skipped
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"features_0": ["calendar"], "features_1": ["calendar"]}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["step_id"] == "calendar"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "calendar_0": "calendar.fake_calendar",
-            "family_calendar_0": True,
-            "calendar_1": "calendar.fake_calendar",
-            "family_calendar_1": True,
-        },
-    )
-    assert result["type"] == data_entry_flow.FlowResultType.FORM
-    assert result["step_id"] == "calendar"
-    assert result["errors"]["base"] == "family_calendar_multiple"
-
-    # Correcting to exactly one checked proceeds normally.
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "calendar_0": "calendar.fake_calendar",
-            "family_calendar_0": True,
-            "calendar_1": "calendar.fake_calendar",
-        },
-    )
-    assert result["step_id"] == "confirm"
 
 
 async def test_calendar_none_found_branch(hass):
@@ -241,7 +215,6 @@ async def test_calendar_none_found_branch(hass):
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"]["roster"][0]["calendar_entity_id"] is None
-    assert result["data"]["family_calendar_member_id"] is None
 
 
 async def test_calendar_and_lists_steps_skipped_when_not_selected(hass):
@@ -278,7 +251,6 @@ async def test_calendar_and_lists_steps_skipped_when_not_selected(hass):
     assert result["data"]["roster"][0]["list_presets"] == []
     assert result["data"]["chores"] == []
     assert result["data"]["rewards"] == []
-    assert result["data"]["family_calendar_member_id"] is None
 
 
 async def test_empty_roster_shows_error(hass):
@@ -290,6 +262,43 @@ async def test_empty_roster_shows_error(hass):
     )
     assert result["type"] == data_entry_flow.FlowResultType.FORM
     assert result["errors"]["base"] == "roster_empty"
+
+
+async def test_invalid_birthdate_format_shows_error_and_recovers(hass):
+    """The birthdate field is a plain typed DD/MM/YYYY text field, not HA's built-in `date`
+    selector (which is popup-only with no year-jump - unusable for old birthdates). Garbage
+    input re-shows the same step with an error instead of silently accepting it or crashing;
+    correcting it afterward proceeds normally."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"roster": "Ada"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"color_0": "Blue"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})  # avatars
+    assert result["step_id"] == "birthdates"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"birthdate_0": "not-a-date"}
+    )
+    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "birthdates"
+    assert result["errors"]["base"] == "invalid_birthdate"
+
+    # An impossible calendar date (there's no 31st of February) is rejected too, not just
+    # malformed text.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"birthdate_0": "31/02/2015"}
+    )
+    assert result["errors"]["base"] == "invalid_birthdate"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"birthdate_0": "21/06/2015"}
+    )
+    assert result["step_id"] == "features"
 
 
 async def test_only_one_instance_allowed(hass):
@@ -344,7 +353,6 @@ async def test_options_flow_add_member_appends_to_existing_roster(hass):
             ],
             "chores": [],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -376,7 +384,7 @@ async def test_options_flow_add_member_appends_to_existing_roster(hass):
     assert result["step_id"] == "add_birthdate"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"birthdate_0": "2010-03-14"}
+        result["flow_id"], {"birthdate_0": "14/03/2010"}
     )
     assert result["step_id"] == "add_features"
 
@@ -447,7 +455,6 @@ async def test_options_flow_add_member_can_add_chores_and_rewards_inline(hass):
                 {"chore_id": "dishes", "name": "Dishes", "points": 5, "frequency": "daily", "assigned_to": "ada"}
             ],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -538,7 +545,6 @@ async def test_options_flow_add_member_excludes_already_linked_users(hass):
             ],
             "chores": [],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)

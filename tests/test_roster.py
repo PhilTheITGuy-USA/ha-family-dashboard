@@ -190,9 +190,9 @@ async def test_reenable_restores_per_feature_hidden_state_not_blanket_unhide(has
 
 async def test_delete_member_removes_entities_and_cleans_up_references(hass: HomeAssistant):
     """Permanent delete: every entity Ada owns is genuinely gone (not hidden), her roster
-    entry disappears, her chore falls back to Unassigned (not deleted, not left dangling), the
-    shared Family-calendar reference clears if it pointed at her, a sibling member's own data
-    is untouched, and her linked HA user account itself is left alone."""
+    entry disappears, her chore falls back to Unassigned (not deleted, not left dangling), a
+    sibling member's own data is untouched, and her linked HA user account itself is left
+    alone."""
     ada_account = await hass.auth.async_create_user(name="Ada Account")
     roster_data = [
         _member("ada", "Ada", ["chores", "calendar"], ha_user_id=ada_account.id),
@@ -202,9 +202,7 @@ async def test_delete_member_removes_entities_and_cleans_up_references(hass: Hom
         {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"},
         {"chore_id": "dishes", "name": "Dishes", "points": 5, "frequency": "daily", "assigned_to": "grace"},
     ]
-    entry = await _setup_entry(
-        hass, roster_data, chores=chores, rewards=[], family_calendar_member_id="ada"
-    )
+    entry = await _setup_entry(hass, roster_data, chores=chores, rewards=[])
 
     color_entity_id = "select.family_dashboard_ada_color"
     points_entity_id = "sensor.family_dashboard_ada_points"
@@ -232,9 +230,6 @@ async def test_delete_member_removes_entities_and_cleans_up_references(hass: Hom
     updated_chores = {c["chore_id"]: c["assigned_to"] for c in entry.data["chores"]}
     assert updated_chores == {"trash": None, "dishes": "grace"}
     assert hass.states.get("sensor.family_dashboard_dishes") is not None
-
-    # Dangling Family-calendar reference cleared.
-    assert entry.data["family_calendar_member_id"] is None
 
     # Her HA account itself is untouched.
     users = await hass.auth.async_get_users()

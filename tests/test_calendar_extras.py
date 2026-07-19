@@ -14,11 +14,11 @@ from custom_components.family_dashboard.modules.settings.sensor import avatars_d
 
 
 class FakeSourceCalendar(CalendarEntity):
-    _attr_name = "Fake Source"
-    _attr_unique_id = "fake_source"
     _attr_should_poll = False
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = "Fake Source", unique_id: str = "fake_source") -> None:
+        self._attr_name = name
+        self._attr_unique_id = unique_id
         self._events: list[CalendarEvent] = []
 
     @property
@@ -47,9 +47,9 @@ def _normalize(kwargs: dict) -> dict:
     return out
 
 
-async def _setup_fake_source_calendar(hass: HomeAssistant) -> FakeSourceCalendar:
+async def _setup_fake_source_calendar(hass: HomeAssistant, *extra: CalendarEntity) -> FakeSourceCalendar:
     fake = FakeSourceCalendar()
-    setup_test_component_platform(hass, "calendar", [fake])
+    setup_test_component_platform(hass, "calendar", [fake, *extra])
     assert await async_setup_component(hass, "calendar", {"calendar": [{"platform": "test"}]})
     await hass.async_block_till_done()
     return fake
@@ -68,12 +68,12 @@ def _member(name, member_id, calendar_entity_id=None):
     }
 
 
-async def _setup_entry(hass: HomeAssistant, roster: list[dict], family_calendar_member_id=None) -> MockConfigEntry:
+async def _setup_entry(hass: HomeAssistant, roster: list[dict]) -> MockConfigEntry:
     entry = MockConfigEntry(
         version=1,
         domain=DOMAIN,
         title="Family Dashboard",
-        data={"roster": roster, "family_calendar_member_id": family_calendar_member_id},
+        data={"roster": roster},
         source="user",
         unique_id=DOMAIN,
     )
@@ -115,12 +115,16 @@ async def test_calendar_view_selector_cycles(hass: HomeAssistant):
 
 
 async def test_event_calendar_select_options_include_family(hass: HomeAssistant):
-    await _setup_fake_source_calendar(hass)
+    # "Family" is auto-detected by calendar NAME, not member-flagged - a calendar.* entity
+    # whose own name is literally "Family" is enough, independent of any roster member's own
+    # mapping (see modules/calendar/dashboard.py's _family_calendar_entity).
+    family_calendar = FakeSourceCalendar(name="Family", unique_id="family")
+    await _setup_fake_source_calendar(hass, family_calendar)
     roster = [
         _member("Ada", "ada", calendar_entity_id="calendar.fake_source"),
         _member("Grace", "grace", calendar_entity_id="calendar.fake_source"),
     ]
-    await _setup_entry(hass, roster, family_calendar_member_id="grace")
+    await _setup_entry(hass, roster)
 
     state = hass.states.get("select.family_dashboard_event_calendar")
     assert state.attributes["options"] == ["Ada", "Grace", "Family"]

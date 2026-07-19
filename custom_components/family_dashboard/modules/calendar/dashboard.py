@@ -11,19 +11,26 @@ module docstring for what a "bucket" is):
   matches none = hidden) - the `calendars:` array stays a fixed, static list; only each
   entry's `filter` string is templated per member via `custom:config-template-card`.
 - `async_calendar_view_card`: content for a personal bucket - that member's own calendar plus
-  the shared Family calendar (if any, and if it isn't already them); no per-member toggle
-  (nothing to filter, only one or two calendars ever shown here), but Birthdays/Holidays ARE
-  toggleable here too (see below - a live-reported requirement, not fixed/always-shown).
+  the Family/Birthdays/Holidays overlays (see below); no per-member toggle (nothing to filter,
+  only one or two personal calendars ever shown here), but the overlays ARE toggleable here
+  too (see below - a live-reported requirement, not fixed/always-shown).
 
-Plus (2026-07-13 feature audit additions, all ported from the same legacy dashboard file):
-- Birthdays (`calendar.family_dashboard_birthdays`, OUR OWN computed entity - see
+Plus (2026-07-13 feature audit additions, all ported from the same legacy dashboard file, and
+the 2026-07-18 Family calendar redesign):
+- Family (any `calendar.*` entity whose OWN name matches "Family" case-insensitively -
+  `_family_calendar_entity` - a household-shared Google/CalDAV/etc. calendar, e.g. a Google
+  Calendar literally named "Family" shared to everyone. NOT tied to any roster member's own
+  calendar mapping - replaces the earlier design where one member's personal calendar slot
+  had to double as the shared one, which made it impossible to have a genuinely separate
+  shared calendar without sacrificing that member's own personal view)/Birthdays
+  (`calendar.family_dashboard_birthdays`, OUR OWN computed entity - see
   `modules/calendar/birthdays.py`, since HA has no built-in "Birthdays" integration)/Holidays
   (any HA "Holiday" integration entries, auto-provisioned for US + Philippines by
   `holidays_setup.py` and detected generically via `_holiday_calendar_entities` - not one
   hardcoded country) overlay layers - added to BOTH bucket kinds, toggle-filter pills for them
-  on BOTH bucket kinds too (`switch.family_dashboard_birthdays_shown`/`..._holidays_shown`,
-  same mechanism as member toggles; one combined Holidays toggle covers every detected
-  country, not one per country).
+  on BOTH bucket kinds too (`switch.family_dashboard_family_calendar_shown`/
+  `..._birthdays_shown`/`..._holidays_shown`, same mechanism as member toggles; one combined
+  Holidays toggle covers every detected country, not one per country; Family defaults on).
 - The view-granularity selector (`select.family_dashboard_calendar_view`) - a nav pill that
   cycles it via `select.select_next`, and its value is templated into BOTH the Kiosk card's
   and a personal bucket's own card's `days`/`startingDay` fields (exact `Today/Tomorrow/Week/
@@ -113,6 +120,15 @@ _HOLIDAY_INTEGRATION_DOMAIN = "holiday"
 _VIEW_SELECT_ENTITY_ID = "select.family_dashboard_calendar_view"
 _BIRTHDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_birthdays_shown"
 _HOLIDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_holidays_shown"
+_FAMILY_CALENDAR_SHOWN_ENTITY_ID = "switch.family_dashboard_family_calendar_shown"
+
+# Name family members use for their household's shared calendar (e.g. a Google Calendar
+# literally named "Family", shared to everyone). Matched case-insensitively against every
+# calendar.* entity's own name - not tied to any roster member's own mapping (see this
+# module's docstring's "Family calendar" bullet - replaces the earlier
+# CONF_FAMILY_CALENDAR_MEMBER_ID member-flagging design, which forced giving up a member's
+# own personal calendar slot to host it).
+_FAMILY_CALENDAR_NAME = "family"
 
 # Ported verbatim from the legacy dashboard's own view-selector JS (see
 # family-hub.yaml's STARTDAY/DAYS variables) - Today/Tomorrow get week-planner-card's special
@@ -150,6 +166,20 @@ def _avatar_select_entity_id(member_id: str) -> str:
 
 def _color_select_entity_id(member_id: str) -> str:
     return f"select.family_dashboard_{member_id}_color"
+
+
+def _family_calendar_entity(hass: HomeAssistant) -> tuple[str, str] | None:
+    """(entity_id, display_name) of the household's shared calendar - any `calendar.*` entity
+    whose own name matches `_FAMILY_CALENDAR_NAME` case-insensitively (e.g. a Google Calendar
+    literally named "Family"), or `None` if no such entity currently exists. Auto-detected
+    fresh on every call rather than a stored id, same "compute live, existence-gated" pattern
+    `_holiday_calendar_entities` already uses - so renaming/removing/re-adding the calendar on
+    the provider side just works without a reconfigure. If more than one entity matches, the
+    first one found wins (no disambiguation UI - a genuine edge case, not worth a picker for)."""
+    for state in hass.states.async_all("calendar"):
+        if state.name.strip().lower() == _FAMILY_CALENDAR_NAME:
+            return state.entity_id, state.name
+    return None
 
 
 def _holiday_calendar_entities(hass: HomeAssistant) -> list[tuple[str, str]]:
@@ -191,6 +221,17 @@ def _overlay_entries(hass: HomeAssistant, toggled: bool) -> list[dict]:
     is gray/off") caught this - pytest alone couldn't, since it only ever asserted the
     generated STRING content, never how the third-party card actually interprets it."""
     entries = []
+    family_calendar = _family_calendar_entity(hass)
+    if family_calendar is not None:
+        entity_id, name = family_calendar
+        entry = {"entity": entity_id, "name": name, "color": "#6366F1"}
+        if toggled:
+            entry["filter"] = (
+                f"${{ states['{_FAMILY_CALENDAR_SHOWN_ENTITY_ID}']?.state === 'on' "
+                "? '^$' : '.*' }"
+            )
+        entries.append(entry)
+
     if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
         entry = {"entity": BIRTHDAYS_ENTITY_ID, "name": "Birthdays", "color": "#33a02c"}
         if toggled:
@@ -251,6 +292,8 @@ def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict 
 
     toggle_entities = [_shown_switch_entity_id(m["member_id"]) for m in calendar_members]
     toggle_entities += [_color_select_entity_id(m["member_id"]) for m in calendar_members]
+    if _family_calendar_entity(hass) is not None:
+        toggle_entities.append(_FAMILY_CALENDAR_SHOWN_ENTITY_ID)
     if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
         toggle_entities.append(_BIRTHDAYS_SHOWN_ENTITY_ID)
     if _holiday_calendar_entities(hass):
@@ -274,11 +317,12 @@ async def async_calendar_view_card(
     hass: HomeAssistant, entry: ConfigEntry, members: list[dict]
 ) -> dict | None:
     """One week-planner-card listing every given member's mapped calendar proxy entity,
-    color-coded to their roster color, plus Birthdays/Holidays - used for a personal bucket's
-    Calendar tab. Returns None if there's nothing at all to show.
+    color-coded to their roster color, plus Family/Birthdays/Holidays - used for a personal
+    bucket's Calendar tab. Returns None if there's nothing at all to show.
 
-    Birthdays/Holidays ARE toggleable here too (`toggled=True`, a live-reported requirement -
-    "always visible... though their view should be a toggle like any Roster user"), via the
+    Family/Birthdays/Holidays ARE toggleable here too (`toggled=True`, a live-reported
+    requirement - "always visible... though their view should be a toggle like any Roster
+    user"), via the
     SAME shared switches the Kiosk bucket's card uses (`dashboard/registry.py`'s
     `_personal_calendar_cards` wires in the matching toggle pills) - unlike per-member
     calendars, which still have no per-member toggle in a personal bucket (nothing to filter,
@@ -307,6 +351,8 @@ async def async_calendar_view_card(
         return None
 
     toggle_entities = []
+    if _family_calendar_entity(hass) is not None:
+        toggle_entities.append(_FAMILY_CALENDAR_SHOWN_ENTITY_ID)
     if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
         toggle_entities.append(_BIRTHDAYS_SHOWN_ENTITY_ID)
     if _holiday_calendar_entities(hass):
@@ -567,13 +613,21 @@ def _fixed_toggle_pill(shown_entity_id: str, name: str, icon: str, color_hex: st
 
 
 def async_birthdays_holidays_toggle_pills(hass: HomeAssistant) -> list[dict]:
-    """Toggle-filter pills for Birthdays/Holidays - used on BOTH the Kiosk bucket's and every
-    personal bucket's Calendar tab (see `dashboard/registry.py`'s `_kiosk_calendar_cards`/
-    `_personal_calendar_cards`), same shared pill styling as member toggles
-    (`_toggle_pill_base_styles`/`_fixed_toggle_pill`) - empty list entries omitted for
+    """Toggle-filter pills for Family/Birthdays/Holidays - used on BOTH the Kiosk bucket's and
+    every personal bucket's Calendar tab (see `dashboard/registry.py`'s
+    `_kiosk_calendar_cards`/`_personal_calendar_cards`), same shared pill styling as member
+    toggles (`_toggle_pill_base_styles`/`_fixed_toggle_pill`) - empty list entries omitted for
     whichever overlay doesn't exist on this instance. One combined Holidays pill covers every
-    detected Holiday integration entry (US, Philippines, or any others added later)."""
+    detected Holiday integration entry (US, Philippines, or any others added later). Name kept
+    as-is (not renamed to include "family") to avoid an unrelated diff across every caller -
+    it's simply "the fixed-overlay toggle pills" now, Family included."""
     pills = []
+    if _family_calendar_entity(hass) is not None:
+        pills.append(
+            _fixed_toggle_pill(
+                _FAMILY_CALENDAR_SHOWN_ENTITY_ID, "Family", "mdi:home-heart", "#6366F1"
+            )
+        )
     if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
         pills.append(
             _fixed_toggle_pill(_BIRTHDAYS_SHOWN_ENTITY_ID, "Birthdays", "mdi:cake-variant", "#33a02c")

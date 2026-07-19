@@ -1,58 +1,78 @@
 """Config flow for Family Dashboard.
 
 Steps, in order:
-  1. `user`        - roster names (comma-separated). Always-on: Settings/Roster is core, not
-                      a toggleable feature (see const.py).
-  2. `colors`       - one color picker per roster name, built dynamically from step 1's
-                      answers.
-  2a. `avatars`     - one avatar picker per roster name, options built from whatever's
-                      actually in `/config/www/family_dashboard/avatars/` at the moment
-                      (seeded on demand via `assets.async_seed_assets`, which needs only
-                      `hass` - not a live config entry, so this works even during initial
-                      setup before one exists). A plain dropdown, not the Settings
-                      dashboard's picture-grid popup - config-flow forms can't render a
-                      custom Lovelace-style picker (same platform limitation already
-                      accepted for the `colors` step's own plain dropdown).
-  2b. `birthdates`  - one optional date picker per roster name (skippable per member - not
-                      everyone has to provide one). Powers the computed
-                      `calendar.family_dashboard_birthdays` overlay (see
-                      `modules/calendar/birthdays.py`).
-  3. `features`     - which of Calendar / Lists / Chores & Rewards each INDIVIDUAL roster
-                      member wants - one screen, one multi-select per member (per-member,
-                      not household-wide - see const.py's FEATURES docstring).
-  4. `link_users`   - optionally link each roster member to an existing HA user account, one
-                      screen, one optional user-picker per member (a `select` selector
-                      populated from `hass.auth.async_get_users()` - HA core has no generic
-                      "user" selector type to build this on). Lets the (not-yet-built)
-                      dashboard generator tell "the person looking at this right now" apart
-                      from everyone else. Skippable per member.
-  5. `calendar`     - ONLY shown if at least one roster member selected "calendar" in step 3.
-                      If no `calendar.*` entities exist anywhere yet, shows
-                      `calendar_none_found` instead (instructions + continue, no fields -
-                      never holds the flow open waiting for external OAuth setup). Otherwise
-                      one screen, two optional selectors per opted-in member (map an existing
-                      calendar entity, map a notify entity for reminders) - a filtered subset
-                      of the roster, not everyone.
-  6. `lists`        - ONLY shown if at least one roster member selected "lists" in step 3.
-                      One screen, one preset multi-select per opted-in member (a filtered
-                      subset of the roster, not everyone - see build_lists_schema). Skipped
-                      entirely (straight to confirm) if nobody selected "lists".
-  7. `add_chore`    - ONLY shown if at least one roster member selected "chores" in step 3.
-                      A repeat-until-done loop: one "add a chore" form (name/points/
-                      frequency/assigned-to), re-shown blank after each submission: leaving
-                      `name` blank ends the loop (not a separate yes/no step - see the
-                      function's docstring). Chains to `add_reward` when done.
-  8. `add_reward`   - same repeat-until-done shape as `add_chore` (name/cost/assigned-to, no
-                      frequency), also gated on step 3's "chores" selection (Rewards has no
-                      separate feature toggle).
-  9. `confirm`      - summary of what's about to be created; submitting creates the config
-                      entry.
+  1. `user`          - roster names (comma-separated), collected once for the whole
+                        household. Always-on: Settings/Roster is core, not a toggleable
+                        feature (see const.py).
+  2. Per-member loop  - `colors` -> `avatars` -> `birthdates` -> `features` -> `link_users`
+                        -> (conditionally) `calendar` -> (conditionally) `lists`, ONE SCREEN
+                        PER FIELD PER ROSTER MEMBER, repeated once per member in roster order
+                        (`self._member_index` tracks which one), before moving on to the next
+                        member. NOT one flat form covering the whole roster at once (that was
+                        the original design - reverted 2026-07-18, live-reported as genuinely
+                        confusing: nothing on a flat multi-member form said which row belonged
+                        to which person, which is exactly how the old "Also use as the shared
+                        Family calendar" checkbox went unnoticed. HA's config-flow API has no
+                        per-field/per-section dynamic text, only a step's own
+                        `description_placeholders` - so one-screen-per-member, naming that
+                        member in the description, is the only real fix; it's the same
+                        pattern `FamilyDashboardOptionsFlow`'s own "add a member" sub-flow
+                        already used below, just looped over the whole initial roster instead
+                        of a single new member). More screens for a larger family, but each
+                        one is unambiguous.
+       - `colors`       - one color picker for the current member.
+       - `avatars`      - one avatar picker, options built from whatever's actually in
+                           `/config/www/family_dashboard/avatars/` at the moment (seeded on
+                           demand via `assets.async_seed_assets`, which needs only `hass` -
+                           not a live config entry, so this works even during initial setup
+                           before one exists). A plain dropdown, not the Settings dashboard's
+                           picture-grid popup - config-flow forms can't render a custom
+                           Lovelace-style picker (same platform limitation already accepted
+                           for the `colors` step's own plain dropdown).
+       - `birthdates`   - one optional date picker (skippable - not everyone has to provide
+                           one). Powers the computed `calendar.family_dashboard_birthdays`
+                           overlay (see `modules/calendar/birthdays.py`).
+       - `features`     - which of Calendar / Lists / Chores & Rewards THIS member wants (see
+                           const.py's FEATURES docstring) - drives whether `calendar`/`lists`
+                           get shown at all for them, below.
+       - `link_users`   - optionally link this member to an existing HA user account (a
+                           `select` selector populated from `hass.auth.async_get_users()` -
+                           HA core has no generic "user" selector type to build this on),
+                           excluding any HA user an earlier member in this same wizard run
+                           already linked to. Lets the dashboard tell "the person looking at
+                           this right now" apart from everyone else. Skippable.
+       - `calendar`     - ONLY shown if this member selected "calendar". If no `calendar.*`
+                           entities exist anywhere yet, shows `calendar_none_found` instead
+                           (instructions + continue, no fields, shown at MOST ONCE per wizard
+                           run even with multiple calendar-opted members - never holds the
+                           flow open waiting for external OAuth setup). Otherwise two optional
+                           selectors (map an existing calendar entity, map a notify entity for
+                           reminders). No "shared Family calendar" field here - that's
+                           auto-detected by calendar name instead of member-flagged, see
+                           `modules/calendar/dashboard.py`'s `_family_calendar_entity`.
+       - `lists`        - ONLY shown if this member selected "lists". One preset multi-select
+                           (see build_lists_schema).
+  3. `add_chore`      - ONLY shown once every member's own loop above has finished, and only
+                        if at least one roster member selected "chores". A repeat-until-done
+                        loop: one "add a chore" form (name/points/frequency/assigned-to),
+                        re-shown blank after each submission: leaving `name` blank ends the
+                        loop (not a separate yes/no step - see the function's docstring).
+                        Chains to `add_reward` when done. Household-scoped, not per-member -
+                        unaffected by the per-member restructuring above.
+  4. `add_reward`     - same repeat-until-done shape as `add_chore` (name/cost/assigned-to, no
+                        frequency), also gated on any member's "chores" selection (Rewards
+                        has no separate feature toggle).
+  5. `confirm`        - summary of what's about to be created; submitting creates the config
+                        entry.
 
 The per-step schema-building/input-parsing logic (`build_*_schema`/`parse_*_input` below) is
 written as plain module-level functions, not methods only `FamilyDashboardConfigFlow` can
-call - a future real Options Flow (reconfigure) needs the exact same forms, pre-filled from
-an existing config entry's data instead of blank, and will call these same functions rather
-than duplicating them.
+call - `FamilyDashboardOptionsFlow` needs the exact same forms, pre-filled from an existing
+config entry's data instead of blank, and calls these same functions rather than duplicating
+them. They already accept a single-member `[name]` list (that's exactly how the Options
+Flow's "add a member" sub-flow has always called them) - the initial wizard's move to
+one-member-per-screen needed ZERO changes to these functions, only to how
+`FamilyDashboardConfigFlow`'s own step handlers call them.
 """
 from __future__ import annotations
 
@@ -73,7 +93,6 @@ from .const import (
     CONF_BIRTHDATE,
     CONF_CALENDAR_ENTITY_ID,
     CONF_CHORES,
-    CONF_FAMILY_CALENDAR_MEMBER_ID,
     CONF_FEATURES,
     CONF_HA_USER_ID,
     CONF_LIST_PRESETS,
@@ -87,7 +106,7 @@ from .const import (
     ROSTER_MAX_MEMBERS,
 )
 from .modules.chores.crud import UNASSIGNED_OPTION
-from .util import slugify_unique
+from .util import ddmmyyyy_to_iso, iso_to_ddmmyyyy, slugify_unique
 
 
 def _split_roster(raw: str) -> list[str]:
@@ -124,10 +143,6 @@ def _calendar_field(idx: int) -> str:
 
 def _notify_field(idx: int) -> str:
     return f"notify_{idx}"
-
-
-def _family_calendar_field(idx: int) -> str:
-    return f"family_calendar_{idx}"
 
 
 def build_colors_schema(
@@ -207,28 +222,49 @@ def _birthdate_field(idx: int) -> str:
 def build_birthdates_schema(
     roster_names: list[str], prior_birthdates: dict[str, str] | None = None
 ) -> vol.Schema:
-    """One OPTIONAL date picker per roster member, one screen - unlike colors, there's no
-    rotating default; a member simply may not have a birthdate on file. `prior_birthdates`
-    (member name -> ISO date string), when given, pre-fills each row - used by the Options
-    Flow's Add Member step, matching `build_colors_schema`'s own shape."""
+    """One OPTIONAL DD/MM/YYYY text field per roster member, one screen - unlike colors,
+    there's no rotating default; a member simply may not have a birthdate on file. Format
+    validation happens in `parse_birthdates_input` (via `util.ddmmyyyy_to_iso`), not here:
+    `voluptuous_serialize` - which HA's own `async_show_form` uses to hand the schema to the
+    frontend - cannot serialize an arbitrary custom validator function at all (confirmed live:
+    raises `Unable to convert schema` the moment the screen tries to RENDER, not merely on bad
+    input, breaking the step every time it's shown). This field is therefore a bare `str` (HA's
+    own `TYPES_MAP` handles that natively) with no format enforcement at the schema level.
+
+    Live-reported gap this whole field replaces: HA's built-in `date` selector (used here
+    originally) is popup-only with no way to type a date directly, and its calendar grid has
+    no year-jump - confirmed by reading `DateSelectorConfig`'s source (zero configurable
+    options) and live-testing the popup itself (the small icon next to the month header does
+    NOT open a year list, contrary to typical Material date pickers). Going from 2026 back to
+    a 1970s-80s birthdate was ~500 "previous month" clicks. `CONF_BIRTHDATE`'s storage
+    contract (ISO date string) and every downstream consumer
+    (`modules/calendar/birthdays.py`'s `date.fromisoformat`, the roster `date` entity, and the
+    Settings tab's own birthdate-edit popup - see `modules/settings/date.py`) needed no
+    changes - only entry into this one field changed. `prior_birthdates` (member name -> ISO
+    date string), when given, pre-fills each row (converted to DD/MM/YYYY for display) - used
+    by the Options Flow's Add Member step, matching `build_colors_schema`'s own shape.
+    """
     prior_birthdates = prior_birthdates or {}
     schema_dict: dict[Any, Any] = {}
     for idx, name in enumerate(roster_names):
         default = prior_birthdates.get(name)
         key = (
-            vol.Optional(_birthdate_field(idx), default=default)
+            vol.Optional(_birthdate_field(idx), default=iso_to_ddmmyyyy(default))
             if default
             else vol.Optional(_birthdate_field(idx))
         )
-        schema_dict[key] = selector({"date": {}})
+        schema_dict[key] = str
     return vol.Schema(schema_dict)
 
 
 def parse_birthdates_input(
     user_input: dict[str, Any], roster_names: list[str]
 ) -> dict[str, str | None]:
+    """Raises `util.InvalidBirthdateText` if any member's typed text isn't a valid DD/MM/YYYY
+    date - callers catch this and re-show the form with an error (same pattern
+    `async_step_user`'s `roster_empty` check already uses)."""
     return {
-        name: user_input.get(_birthdate_field(idx))
+        name: ddmmyyyy_to_iso(user_input.get(_birthdate_field(idx)))
         for idx, name in enumerate(roster_names)
     }
 
@@ -301,19 +337,20 @@ def parse_link_users_input(
 def build_calendar_schema(
     calendar_members: list[str],
     prior: dict[str, tuple[str | None, str | None]] | None = None,
-    prior_family_calendar_member: str | None = None,
 ) -> vol.Schema:
-    """Two optional selectors plus one checkbox per roster member who opted into "calendar" -
-    a FILTERED subset of the full roster (like build_lists_schema), so field indices
-    correspond to positions in `calendar_members`, not the full roster. Real `entity`
-    selectors scoped by domain (confirmed present in HA's SELECTORS registry, unlike the
-    nonexistent "user" one step 0 had to work around) - map an existing calendar entity and,
-    independently, a notify entity for reminders; either or both can be left blank. The
-    checkbox ("Also use as the shared Family calendar") is a plain `bool` field, defaulting
-    to whether `prior_family_calendar_member` names this row - at most one may end up checked,
-    `parse_calendar_input`/the caller validates this, not the schema itself (voluptuous has no
-    cross-field "at most one of these bools" constraint). `prior` (member name ->
-    (calendar_entity_id, notify_entity_id)) pre-fills rows for the future Options Flow.
+    """Two optional selectors per roster member who opted into "calendar" - a FILTERED subset
+    of the full roster (like build_lists_schema), so field indices correspond to positions in
+    `calendar_members`, not the full roster. Real `entity` selectors scoped by domain
+    (confirmed present in HA's SELECTORS registry, unlike the nonexistent "user" one step 0
+    had to work around) - map an existing calendar entity and, independently, a notify entity
+    for reminders; either or both can be left blank. `prior` (member name ->
+    (calendar_entity_id, notify_entity_id)) pre-fills rows for the Options Flow.
+
+    No "shared Family calendar" field here anymore - that's auto-detected by calendar name
+    (see `modules/calendar/dashboard.py`'s `_family_calendar_entity`), not member-flagged. The
+    checkbox this used to have was a live-reported source of confusion (indistinguishable from
+    which roster member's row it belonged to in a flat multi-member form) on top of forcing a
+    user to give up one member's own personal calendar slot to host it.
     """
     prior = prior or {}
     schema_dict: dict[Any, Any] = {}
@@ -331,34 +368,17 @@ def build_calendar_schema(
         )
         schema_dict[cal_field] = selector({"entity": {"domain": "calendar"}})
         schema_dict[notify_field] = selector({"entity": {"domain": "notify"}})
-        schema_dict[
-            vol.Optional(
-                _family_calendar_field(idx),
-                default=name == prior_family_calendar_member,
-            )
-        ] = bool
     return vol.Schema(schema_dict)
 
 
 def parse_calendar_input(
     user_input: dict[str, Any], calendar_members: list[str]
-) -> tuple[dict[str, tuple[str | None, str | None]], list[str]]:
-    """Returns (per-member (calendar_entity_id, notify_entity_id) mapping, list of member
-    names whose "Also use as the shared Family calendar" checkbox was checked). The caller
-    validates that list has at most one entry - this function just reports what was checked,
-    it doesn't enforce the constraint (same separation `async_step_calendar` already uses for
-    the `roster_empty` validation on the `user` step).
-    """
-    calendar = {
+) -> dict[str, tuple[str | None, str | None]]:
+    """Per-member (calendar_entity_id, notify_entity_id) mapping."""
+    return {
         name: (user_input.get(_calendar_field(idx)), user_input.get(_notify_field(idx)))
         for idx, name in enumerate(calendar_members)
     }
-    family_calendar_members = [
-        name
-        for idx, name in enumerate(calendar_members)
-        if user_input.get(_family_calendar_field(idx))
-    ]
-    return calendar, family_calendar_members
 
 
 def build_lists_schema(
@@ -401,10 +421,20 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._roster_features: dict[str, list[str]] = {}
         self._roster_ha_user_ids: dict[str, str | None] = {}
         self._roster_calendar: dict[str, tuple[str | None, str | None]] = {}
-        self._family_calendar_member: str | None = None
         self._roster_list_presets: dict[str, list[str]] = {}
         self._chores: list[dict] = []
         self._rewards: list[dict] = []
+        # Which roster member Colors-through-Lists is currently walking through - every
+        # multi-member step got converted from one flat all-at-once form to one screen per
+        # member (2026-07-18, live-reported: a flat form gives no on-screen indication of
+        # which row belongs to which person - HA's config-flow API has no per-field/per-
+        # section dynamic text, only a step's own description, so one-screen-per-member,
+        # already proven by the Options Flow's own "add a member" sub-flow below, is the only
+        # real fix). More screens/clicks for a larger roster, but each one is unambiguous.
+        self._member_index: int = 0
+        # Shown at most once per wizard run, not once per calendar-opted member - see
+        # `async_step_calendar_none_found`.
+        self._calendar_none_found_shown: bool = False
 
     @staticmethod
     @callback
@@ -438,103 +468,114 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_colors(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            self._roster_colors = parse_colors_input(user_input, self._roster_names)
+            self._roster_colors[name] = parse_colors_input(user_input, [name])[name]
             return await self.async_step_avatars()
 
-        schema = build_colors_schema(self._roster_names)
         return self.async_show_form(
             step_id="colors",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(self._roster_names)},
+            data_schema=build_colors_schema([name]),
+            description_placeholders={"name": name},
         )
 
     async def async_step_avatars(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            self._roster_avatars = parse_avatars_input(user_input, self._roster_names)
+            self._roster_avatars[name] = parse_avatars_input(user_input, [name])[name]
             return await self.async_step_birthdates()
 
         # Needs only `hass`, not a live config entry - safe to call before one exists (see
         # this module's own docstring for the `avatars` step).
         avatar_options = await async_seed_assets(self.hass)
-        schema = build_avatars_schema(self._roster_names, avatar_options)
         return self.async_show_form(
             step_id="avatars",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(self._roster_names)},
+            data_schema=build_avatars_schema([name], avatar_options),
+            description_placeholders={"name": name},
         )
 
     async def async_step_birthdates(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        name = self._roster_names[self._member_index]
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._roster_birthdates = parse_birthdates_input(user_input, self._roster_names)
-            return await self.async_step_features()
+            try:
+                self._roster_birthdates[name] = parse_birthdates_input(user_input, [name])[
+                    name
+                ]
+                return await self.async_step_features()
+            except ValueError:
+                errors["base"] = "invalid_birthdate"
 
-        schema = build_birthdates_schema(self._roster_names)
         return self.async_show_form(
             step_id="birthdates",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(self._roster_names)},
+            data_schema=build_birthdates_schema([name]),
+            description_placeholders={"name": name},
+            errors=errors,
         )
 
     async def async_step_features(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            self._roster_features = parse_features_input(user_input, self._roster_names)
+            self._roster_features[name] = parse_features_input(user_input, [name])[name]
             return await self.async_step_link_users()
 
-        schema = build_features_schema(self._roster_names)
         return self.async_show_form(
             step_id="features",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(self._roster_names)},
+            data_schema=build_features_schema([name]),
+            description_placeholders={"name": name},
         )
 
     async def async_step_link_users(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            self._roster_ha_user_ids = parse_link_users_input(user_input, self._roster_names)
-            return await self._async_step_after_link_users()
+            self._roster_ha_user_ids[name] = parse_link_users_input(user_input, [name])[name]
+            return await self._async_step_after_link_user()
 
         # Real, human-linkable accounts only - excludes system-generated users (e.g. the
         # internal HTTP/Supervisor accounts) the same way the frontend's own person-linking
-        # UI does, since those aren't accounts a family member actually logs in as.
+        # UI does, since those aren't accounts a family member actually logs in as. Also
+        # excludes any HA user an EARLIER member in this same wizard run already linked to -
+        # falls out for free from walking members one at a time now, matching the exclusion
+        # the Options Flow's own `async_step_add_link_user` already had (nothing stopped two
+        # different rows from picking the same HA user in the old flat all-at-once form).
+        already_linked = {uid for uid in self._roster_ha_user_ids.values() if uid}
         users = await self.hass.auth.async_get_users()
         user_options = [
             {"value": user.id, "label": user.name or user.id}
             for user in users
-            if user.is_active and not user.system_generated
+            if user.is_active and not user.system_generated and user.id not in already_linked
         ]
-        schema = build_link_users_schema(self._roster_names, user_options)
         return self.async_show_form(
             step_id="link_users",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(self._roster_names)},
+            data_schema=build_link_users_schema([name], user_options),
+            description_placeholders={"name": name},
         )
 
-    async def _async_step_after_link_users(self) -> config_entries.FlowResult:
-        """Chain to `calendar` (or `calendar_none_found`) only if at least one roster member
-        opted into "calendar" - straight to `_async_step_after_calendar` otherwise. Matches
-        the rebuild plan's wizard-flow order: Link user -> Calendar -> Lists -> Chores ->
-        Confirm.
+    async def _async_step_after_link_user(self) -> config_entries.FlowResult:
+        """Chain to `calendar` (or `calendar_none_found`) only if the CURRENT member opted
+        into "calendar" - straight to `_async_step_after_calendar` otherwise. Per-member
+        version of the old roster-wide dispatcher, matching the Options Flow's own
+        `_async_step_after_link_user`. Matches the rebuild plan's wizard-flow order per
+        member: Link user -> Calendar -> Lists, then either the next member or (once
+        everyone's done) the shared Chores -> Confirm steps.
         """
-        if not self._calendar_members():
+        name = self._roster_names[self._member_index]
+        if "calendar" not in self._roster_features[name]:
             return await self._async_step_after_calendar()
         if not self.hass.states.async_all("calendar"):
+            if self._calendar_none_found_shown:
+                return await self._async_step_after_calendar()
+            self._calendar_none_found_shown = True
             return await self.async_step_calendar_none_found()
         return await self.async_step_calendar()
-
-    def _calendar_members(self) -> list[str]:
-        """Roster member names (in roster order) who selected "calendar" in the features
-        step."""
-        return [
-            name for name in self._roster_names if "calendar" in self._roster_features[name]
-        ]
 
     async def async_step_calendar_none_found(
         self, user_input: dict[str, Any] | None = None
@@ -542,7 +583,10 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """No `calendar.*` entities exist anywhere yet. Never holds the flow open waiting
         for external OAuth setup (e.g. Google Calendar) - show instructions and continue,
         leaving every calendar-opted member explicitly unmapped (not silently skipped -
-        this step itself is the visible record of that).
+        this step itself is the visible record of that). Shown at most once per wizard run
+        (`_calendar_none_found_shown`, set by `_async_step_after_link_user`), not once per
+        calendar-opted member - repeating "you have no calendars yet" for every kid would be
+        pure noise once the wizard says it the first time.
         """
         if user_input is not None:
             return await self._async_step_after_calendar()
@@ -551,64 +595,56 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_calendar(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        calendar_members = self._calendar_members()
-        errors: dict[str, str] = {}
-
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            calendar, family_calendar_members = parse_calendar_input(
-                user_input, calendar_members
-            )
-            if len(family_calendar_members) > 1:
-                errors["base"] = "family_calendar_multiple"
-            else:
-                self._roster_calendar = calendar
-                self._family_calendar_member = (
-                    family_calendar_members[0] if family_calendar_members else None
-                )
-                return await self._async_step_after_calendar()
+            self._roster_calendar[name] = parse_calendar_input(user_input, [name])[name]
+            return await self._async_step_after_calendar()
 
-        schema = build_calendar_schema(
-            calendar_members, prior_family_calendar_member=self._family_calendar_member
-        )
         return self.async_show_form(
             step_id="calendar",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(calendar_members)},
-            errors=errors,
+            data_schema=build_calendar_schema([name]),
+            description_placeholders={"name": name},
         )
 
     async def _async_step_after_calendar(self) -> config_entries.FlowResult:
-        """Chain to the `lists` sub-flow only if at least one roster member opted into
-        "lists" - straight to `_async_step_after_lists` (the chores dispatcher) otherwise,
-        same conditional-subflow pattern used throughout.
+        """Chain to `lists` only if the CURRENT member opted into "lists" - straight to
+        advancing past this member otherwise, same per-member dispatcher shape as
+        `_async_step_after_link_user`.
         """
-        if self._list_members():
+        name = self._roster_names[self._member_index]
+        if "lists" in self._roster_features[name]:
             return await self.async_step_lists()
-        return await self._async_step_after_lists()
-
-    def _list_members(self) -> list[str]:
-        """Roster member names (in roster order) who selected "lists" in the features step."""
-        return [name for name in self._roster_names if "lists" in self._roster_features[name]]
+        return await self._advance_to_next_member()
 
     async def async_step_lists(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        list_members = self._list_members()
-
+        name = self._roster_names[self._member_index]
         if user_input is not None:
-            self._roster_list_presets = parse_lists_input(user_input, list_members)
-            return await self._async_step_after_lists()
+            self._roster_list_presets[name] = parse_lists_input(user_input, [name])[name]
+            return await self._advance_to_next_member()
 
-        schema = build_lists_schema(list_members)
         return self.async_show_form(
             step_id="lists",
-            data_schema=schema,
-            description_placeholders={"roster": ", ".join(list_members)},
+            data_schema=build_lists_schema([name]),
+            description_placeholders={"name": name},
         )
 
-    async def _async_step_after_lists(self) -> config_entries.FlowResult:
+    async def _advance_to_next_member(self) -> config_entries.FlowResult:
+        """Every per-member screen (Colors through Lists) funnels here once that member's own
+        chain finishes. Loops back to Colors for the next roster member, or - once everyone's
+        done - proceeds to the shared Chores & Rewards steps (household-scoped, not
+        per-member, unchanged by this restructuring) and Confirm."""
+        self._member_index += 1
+        if self._member_index < len(self._roster_names):
+            return await self.async_step_colors()
+        return await self._async_step_after_all_members()
+
+    async def _async_step_after_all_members(self) -> config_entries.FlowResult:
         """Chain to the chores/rewards repeat-add loop only if at least one roster member
-        opted into "chores" - straight to confirm otherwise."""
+        opted into "chores" - straight to confirm otherwise. Runs once, after every member's
+        own per-member chain above has finished (not per-member itself - Chores & Rewards is
+        household-scoped)."""
         if self._chores_members():
             return await self.async_step_add_chore()
         return await self.async_step_confirm()
@@ -762,19 +798,12 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for reward in self._rewards
             ]
 
-            family_calendar_member_id = (
-                name_to_member_id[self._family_calendar_member]
-                if self._family_calendar_member
-                else None
-            )
-
             return self.async_create_entry(
                 title="Family Dashboard",
                 data={
                     CONF_ROSTER: roster,
                     CONF_CHORES: chores,
                     CONF_REWARDS: rewards,
-                    CONF_FAMILY_CALENDAR_MEMBER_ID: family_calendar_member_id,
                 },
             )
 
@@ -787,7 +816,6 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             linked = " (linked to HA user)" if self._roster_ha_user_ids[name] else ""
             cal_id, notify_id = self._roster_calendar.get(name, (None, None))
             calendar_str = f", calendar: {cal_id}" if cal_id else ""
-            calendar_str += " [Family calendar]" if name == self._family_calendar_member else ""
             notify_str = " +reminders" if cal_id and notify_id else ""
             presets = self._roster_list_presets.get(name, [])
             presets_str = (
@@ -918,13 +946,18 @@ class FamilyDashboardOptionsFlow(config_entries.OptionsFlow):
     async def async_step_add_birthdate(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._birthdate = parse_birthdates_input(user_input, [self._name])[self._name]
-            return await self.async_step_add_features()
+            try:
+                self._birthdate = parse_birthdates_input(user_input, [self._name])[self._name]
+                return await self.async_step_add_features()
+            except ValueError:
+                errors["base"] = "invalid_birthdate"
         return self.async_show_form(
             step_id="add_birthdate",
             data_schema=build_birthdates_schema([self._name]),
             description_placeholders={"name": self._name},
+            errors=errors,
         )
 
     async def async_step_add_features(
@@ -989,9 +1022,7 @@ class FamilyDashboardOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         if user_input is not None:
-            calendar_map, _family_calendar_members = parse_calendar_input(
-                user_input, [self._name]
-            )
+            calendar_map = parse_calendar_input(user_input, [self._name])
             self._calendar_entity_id, self._notify_entity_id = calendar_map[self._name]
             return await self._async_step_after_calendar()
         return self.async_show_form(

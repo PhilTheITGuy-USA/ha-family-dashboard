@@ -23,11 +23,11 @@ from homeassistant.helpers import entity_registry as er
 
 from ...const import (
     CONF_CALENDAR_ENTITY_ID,
-    CONF_FAMILY_CALENDAR_MEMBER_ID,
     CONF_ROSTER,
     DOMAIN,
     REMINDER_LEAD_TIMES,
 )
+from .dashboard import _family_calendar_entity
 from .date import EVENT_END_DATE_UNIQUE_ID, EVENT_START_DATE_UNIQUE_ID
 from .datetime import EVENT_END_UNIQUE_ID, EVENT_START_UNIQUE_ID
 from .switch import EVENT_ALL_DAY_UNIQUE_ID, reminder_switch_unique_id
@@ -52,10 +52,10 @@ def _entity(hass: HomeAssistant, domain: str, unique_id_suffix: str, entry: Conf
 
 def _target_calendar_entity_id(hass: HomeAssistant, entry: ConfigEntry, calendar_name: str) -> str:
     if calendar_name == "Family":
-        family_member_id = entry.data.get(CONF_FAMILY_CALENDAR_MEMBER_ID)
-        if not family_member_id:
+        family_calendar = _family_calendar_entity(hass)
+        if family_calendar is None:
             raise HomeAssistantError("No Family calendar is configured")
-        return f"calendar.family_dashboard_{family_member_id}_calendar"
+        return family_calendar[0]
 
     roster = entry.data[CONF_ROSTER]
     member = next((m for m in roster if m["name"] == calendar_name), None)

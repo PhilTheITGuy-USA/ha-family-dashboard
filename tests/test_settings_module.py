@@ -10,10 +10,13 @@ entity is added - worth adding once this scaffold is picked up, but the exact im
 wasn't verified against a real install in this session, so it's noted as a TODO instead of
 guessed at.
 """
+import pytest
+
 import homeassistant.components.select as select_component
 from homeassistant.components.calendar import CalendarEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry, setup_test_component_platform
@@ -173,6 +176,59 @@ async def test_changing_birthdate_via_service_updates_state_and_persists_through
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert hass.states.get("date.family_dashboard_ada_birthdate").state == "2012-01-05"
+
+
+async def test_set_birthdate_service_reads_scratch_field_and_clears_it(hass: HomeAssistant):
+    """The Settings tab's birthdate-edit popup doesn't use the native `date.set_value`
+    service directly (its stock more-info dialog has the same popup-only/no-year-jump picker
+    the wizard's Birthdate step already worked around) - it types DD/MM/YYYY into a shared
+    scratch text field and calls `family_dashboard.set_birthdate`, targeted at the specific
+    member's own birthdate entity, which reads/converts/commits the scratch value and clears
+    it afterward."""
+    roster = [
+        {"member_id": "ada", "name": "Ada", "color": "Blue"},
+        {"member_id": "grace", "name": "Grace", "color": "Green"},
+    ]
+    await _setup_entry(hass, roster)
+
+    await hass.services.async_call(
+        "text",
+        "set_value",
+        {"entity_id": "text.family_dashboard_birthdate_entry", "value": "21/06/2015"},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "family_dashboard",
+        "set_birthdate",
+        {"entity_id": "date.family_dashboard_ada_birthdate"},
+        blocking=True,
+    )
+
+    assert hass.states.get("date.family_dashboard_ada_birthdate").state == "2015-06-21"
+    # Untouched sibling and cleared scratch field.
+    assert hass.states.get("date.family_dashboard_grace_birthdate").state == "unknown"
+    assert hass.states.get("text.family_dashboard_birthdate_entry").state == ""
+
+
+async def test_set_birthdate_service_rejects_invalid_text(hass: HomeAssistant):
+    roster = [{"member_id": "ada", "name": "Ada", "color": "Blue"}]
+    await _setup_entry(hass, roster)
+
+    await hass.services.async_call(
+        "text",
+        "set_value",
+        {"entity_id": "text.family_dashboard_birthdate_entry", "value": "not-a-date"},
+        blocking=True,
+    )
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "family_dashboard",
+            "set_birthdate",
+            {"entity_id": "date.family_dashboard_ada_birthdate"},
+            blocking=True,
+        )
+    # Unchanged on failure - no partial/garbage write.
+    assert hass.states.get("date.family_dashboard_ada_birthdate").state == "unknown"
 
 
 async def test_feature_switches_created_with_initial_state_from_entry_data(hass: HomeAssistant):

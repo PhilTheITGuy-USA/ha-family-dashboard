@@ -18,6 +18,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from ...const import DOMAIN, REMINDER_LEAD_TIMES
 
+FAMILY_CALENDAR_SHOWN_UNIQUE_ID = "family_calendar_shown"
 BIRTHDAYS_SHOWN_UNIQUE_ID = "birthdays_shown"
 HOLIDAYS_SHOWN_UNIQUE_ID = "holidays_shown"
 EVENT_ALL_DAY_UNIQUE_ID = "event_all_day"
@@ -31,6 +32,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     entities: list[SwitchEntity] = [
+        _OverlayShownSwitch(entry, FAMILY_CALENDAR_SHOWN_UNIQUE_ID, "Family Calendar Shown"),
         _OverlayShownSwitch(entry, BIRTHDAYS_SHOWN_UNIQUE_ID, "Birthdays Shown"),
         _OverlayShownSwitch(entry, HOLIDAYS_SHOWN_UNIQUE_ID, "Holidays Shown"),
         _EventScratchSwitch(entry, EVENT_ALL_DAY_UNIQUE_ID, "Event All Day"),

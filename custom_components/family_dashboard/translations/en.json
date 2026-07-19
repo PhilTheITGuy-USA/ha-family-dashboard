@@ -10,23 +10,26 @@
       },
       "colors": {
         "title": "Family Dashboard - Colors",
-        "description": "Pick a color for each family member: {roster}"
+        "description": "Pick a color for {name}."
       },
       "avatars": {
         "title": "Family Dashboard - Avatars",
-        "description": "Pick an avatar for each family member: {roster}. You can pick from a bigger picture grid, or add your own photos, later from Settings."
+        "description": "Pick an avatar for {name}. You can pick from a bigger picture grid, or add your own photos, later from Settings."
       },
       "birthdates": {
         "title": "Family Dashboard - Birthdates",
-        "description": "Optionally set a birthdate for each family member: {roster}. Powers the Birthdays overlay on the Calendar tab - skip anyone you'd rather not set one for."
+        "description": "Optionally set {name}'s birthdate as DD/MM/YYYY (e.g. 21/06/2015). Powers the Birthdays overlay on the Calendar tab - leave blank to skip.",
+        "data": {
+          "birthdate_0": "Birthdate (DD/MM/YYYY)"
+        }
       },
       "features": {
         "title": "Family Dashboard - Features",
-        "description": "For each family member ({roster}), choose which features they want. Settings/Roster is always included for everyone."
+        "description": "Choose which features {name} wants. Settings/Roster is always included for everyone."
       },
       "link_users": {
-        "title": "Family Dashboard - Link HA Users (optional)",
-        "description": "Optionally link each family member ({roster}) to an existing Home Assistant user account. This lets them see their own personal dashboard view later. Leave a field blank to skip - you can set this later."
+        "title": "Family Dashboard - Link HA User (optional)",
+        "description": "Optionally link {name} to an existing Home Assistant user account (accounts already linked to another family member aren't listed). This lets them see their own personal dashboard view later. Leave blank to skip - you can set this later."
       },
       "calendar_none_found": {
         "title": "Family Dashboard - Calendar",
@@ -34,11 +37,11 @@
       },
       "calendar": {
         "title": "Family Dashboard - Calendar",
-        "description": "For each family member who wants Calendar ({roster}), optionally map an existing calendar and, separately, a notify target for reminders. Leave either blank to skip - you can set this later. At most one member's mapped calendar may also be checked as the shared Family calendar, shown on every viewer's Calendar tab."
+        "description": "Optionally map an existing calendar for {name}, and separately, a notify target for reminders. Leave either blank to skip - you can set this later. A calendar named \"Family\" (if one exists) is automatically shared with everyone - no setup needed here."
       },
       "lists": {
         "title": "Family Dashboard - Lists",
-        "description": "For each family member who wants Lists ({roster}), choose which lists to create for them (To-Do, Shopping, Packing, Gift Ideas, Custom). Each person's lists are private to them."
+        "description": "Choose which lists to create for {name} (To-Do, Shopping, Packing, Gift Ideas, Custom). Each person's lists are private to them."
       },
       "add_chore": {
         "title": "Family Dashboard - Chores",
@@ -55,7 +58,7 @@
     },
     "error": {
       "roster_empty": "Enter at least one family member name.",
-      "family_calendar_multiple": "Only one family member's calendar may be checked as the shared Family calendar."
+      "invalid_birthdate": "Enter a date as DD/MM/YYYY, e.g. 21/06/2015."
     },
     "abort": {
       "already_configured": "Family Dashboard has already been set up on this instance."
@@ -86,7 +89,10 @@
       },
       "add_birthdate": {
         "title": "Add Family Member - Birthdate",
-        "description": "Optionally set {name}'s birthdate. Powers the Birthdays overlay on the Calendar tab - leave blank to skip."
+        "description": "Optionally set {name}'s birthdate as DD/MM/YYYY (e.g. 21/06/2015). Powers the Birthdays overlay on the Calendar tab - leave blank to skip.",
+        "data": {
+          "birthdate_0": "Birthdate (DD/MM/YYYY)"
+        }
       },
       "add_features": {
         "title": "Add Family Member - Features",
@@ -122,7 +128,8 @@
       }
     },
     "error": {
-      "name_required": "Enter a name."
+      "name_required": "Enter a name.",
+      "invalid_birthdate": "Enter a date as DD/MM/YYYY, e.g. 21/06/2015."
     }
   },
   "issues": {

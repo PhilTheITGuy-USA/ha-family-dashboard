@@ -58,7 +58,6 @@ from homeassistant.core import HomeAssistant
 
 from ..const import (
     CONF_DISABLED,
-    CONF_FAMILY_CALENDAR_MEMBER_ID,
     CONF_FEATURES,
     CONF_HA_USER_ID,
     CONF_ROSTER,
@@ -362,15 +361,15 @@ async def _kiosk_calendar_cards(
 
 
 async def _personal_calendar_cards(
-    hass: HomeAssistant, entry: ConfigEntry, member: dict, family_member: dict | None
+    hass: HomeAssistant, entry: ConfigEntry, member: dict
 ) -> list[dict]:
     if not _any_calendar_enabled(entry.data[CONF_ROSTER]):
         return [_NO_CALENDARS_CARD]
 
-    members = [member]
-    if family_member is not None and family_member["member_id"] != member["member_id"]:
-        members.append(family_member)
-    card = await async_calendar_view_card(hass, entry, members)
+    # The Family calendar (if any) is added automatically by `async_calendar_view_card`
+    # itself via `_overlay_entries` - no member lookup needed, unlike the earlier design where
+    # one flagged roster member's own mapping had to be passed through explicitly.
+    card = await async_calendar_view_card(hass, entry, [member])
     grid = [card] if card else [_NO_CALENDARS_CARD]
     # Add Event + the view selector (Today/Tomorrow/Week/Biweek/Month) - a live-reported gap,
     # this row previously only had Add Event, leaving a personal bucket's calendar permanently
@@ -475,15 +474,13 @@ async def _kiosk_chores_cards(hass: HomeAssistant, entry: ConfigEntry, roster: l
 async def async_build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     roster = entry.data[CONF_ROSTER]
     # A disabled member (roster.py's async_set_member_disabled) must disappear from every
-    # bucket-facing part of the dashboard - Kiosk's per-member columns/pills, the shared
-    # Family-calendar lookup, and their own personal bucket (which also frees their linked HA
-    # account to fall back into Kiosk, same as any never-linked account - see roster.py's own
-    # module docstring). Settings intentionally does NOT use this filtered list - it reads the
-    # FULL roster straight from entry.data itself (async_settings_view_cards), since a
-    # disabled member must stay visible there to be re-enabled or deleted at all.
+    # bucket-facing part of the dashboard - Kiosk's per-member columns/pills and their own
+    # personal bucket (which also frees their linked HA account to fall back into Kiosk, same
+    # as any never-linked account - see roster.py's own module docstring). Settings
+    # intentionally does NOT use this filtered list - it reads the FULL roster straight from
+    # entry.data itself (async_settings_view_cards), since a disabled member must stay visible
+    # there to be re-enabled or deleted at all.
     active_roster = [m for m in roster if not m.get(CONF_DISABLED)]
-    roster_by_id = {m["member_id"]: m for m in active_roster}
-    family_member = roster_by_id.get(entry.data.get(CONF_FAMILY_CALENDAR_MEMBER_ID))
 
     buckets = await _build_viewer_buckets(hass, active_roster)
 
@@ -512,9 +509,7 @@ async def async_build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) 
             else:
                 cards = []
                 if tab == "calendar":
-                    cards.extend(
-                        await _personal_calendar_cards(hass, entry, bucket.member, family_member)
-                    )
+                    cards.extend(await _personal_calendar_cards(hass, entry, bucket.member))
                 elif tab == "lists":
                     member_cards = await async_lists_cards_for_member(hass, entry, bucket.member)
                     cards.extend(member_cards or [_NO_LISTS_CARD])

@@ -42,6 +42,7 @@ from ...const import (
 )
 from ..chores.dashboard import async_change_pin_button, async_pin_change_popup_card
 from .sensor import AVATARS_SENSOR_ENTITY_ID
+from .text import BIRTHDATE_SCRATCH_UNIQUE_ID
 
 _NAV_BUTTON_STYLE = {
     "card": [
@@ -111,13 +112,19 @@ def _name_pill(name_entity_id: str) -> dict:
     }
 
 
-def _birthdate_pill(birthdate_entity_id: str) -> dict:
-    """'Birthdate: <value>' - same tap-opens-native-more-info pattern as `_name_pill`; a
-    `date` entity's stock more-info dialog already provides a native date picker, no custom
-    edit UI needed. Shows "Not set" instead of HA's raw "unknown" state when no birthdate has
-    been chosen yet (optional field - not every member has to set one). `entity_id` can be
-    `None` in dashboard-only tests that build config without a full entry setup - degrades
-    gracefully rather than crashing, same defensive posture as `_feature_toggle_pill`'s own
+def _birthdate_pill(member_id: str, birthdate_entity_id: str) -> dict:
+    """'Birthdate: DD/MM/YYYY' - opens `_birthdate_edit_popup` instead of tapping straight
+    into this entity's stock `date`-domain more-info dialog. That native dialog uses HA's
+    built-in date picker widget, which is popup-only (no way to type a date directly) with no
+    year-jump in its calendar grid (confirmed by reading `DateSelectorConfig`'s source - zero
+    configurable options - and live-testing the popup itself), making it unusable for old
+    birthdates - the exact same live-reported gap the wizard's own Birthdate step already
+    worked around (see `util.ddmmyyyy_to_iso`'s docstring). Reformats the stored ISO state to
+    DD/MM/YYYY for display (client-side JS, not baked in at generation time) to match what the
+    edit popup expects you to type. Shows "Not set" when no birthdate has been chosen yet
+    (optional field - not every member has to set one). `entity_id` can be `None` in
+    dashboard-only tests that build config without a full entry setup - degrades gracefully
+    rather than crashing, same defensive posture as `_feature_toggle_pill`'s own
     `entity_id or ""` guard (this pill uses `+` string concatenation, unlike `_name_pill`'s
     f-string, which does NOT crash on a `None` substitution - "+" does)."""
     birthdate_entity_id = birthdate_entity_id or ""
@@ -129,10 +136,53 @@ def _birthdate_pill(birthdate_entity_id: str) -> dict:
         "icon": "mdi:cake-variant",
         "name": (
             "[[[ var s = states['" + birthdate_entity_id + "'].state; "
-            "return 'Birthdate: ' + (s === 'unknown' ? 'Not set' : s); ]]]"
+            "if (s === 'unknown') return 'Birthdate: Not set'; "
+            "var p = s.split('-'); "
+            "return 'Birthdate: ' + p[2] + '/' + p[1] + '/' + p[0]; ]]]"
         ),
-        "tap_action": {"action": "more-info"},
+        "tap_action": {"action": "navigate", "navigation_path": f"#birthdate-{member_id}"},
         "styles": _PLAIN_PILL_STYLE,
+    }
+
+
+def _birthdate_edit_popup(member_id: str, birthdate_entity_id: str, scratch_entity_id: str) -> dict:
+    """Typed DD/MM/YYYY birthdate editor - same "entities card with a scratch field, plus a
+    commit button" shape as the Add Event popup (`modules/calendar/dashboard.py`'s
+    `async_add_event_popup_card`), not a custom widget invented from scratch. The scratch
+    field (`scratch_entity_id`, `text.py`'s `_BirthdateScratchText`) is HOUSEHOLD-scoped (one
+    shared instance, not per-member) - fine because only one of these popups can ever be open
+    at a time - and the Save button's `perform_action` targets THIS member's own birthdate
+    entity specifically, so `modules/settings/date.py`'s `async_set_birthdate` service knows
+    which member it's setting even though it reads the shared scratch value. `entity_id`s can
+    be `None` in dashboard-only tests that build config without a full entry setup."""
+    birthdate_entity_id = birthdate_entity_id or ""
+    scratch_entity_id = scratch_entity_id or ""
+    return {
+        "type": "custom:bubble-card",
+        "card_type": "pop-up",
+        "hash": f"#birthdate-{member_id}",
+        "name": "Edit Birthdate",
+        "icon": "mdi:cake-variant",
+        "cards": [
+            {
+                "type": "entities",
+                "title": "Edit Birthdate",
+                "entities": [
+                    {"entity": scratch_entity_id, "name": "New Birthdate (DD/MM/YYYY)"},
+                ],
+                "show_header_toggle": False,
+            },
+            {
+                "type": "button",
+                "name": "Save",
+                "icon": "mdi:content-save",
+                "tap_action": {
+                    "action": "perform-action",
+                    "perform_action": "family_dashboard.set_birthdate",
+                    "target": {"entity_id": birthdate_entity_id},
+                },
+            },
+        ],
     }
 
 
@@ -301,7 +351,7 @@ def _member_settings_stack(member_id: str, name_entity_id: str, birthdate_entity
             _name_pill(name_entity_id),
             _color_pill(member_id, _color_select_entity_id(member_id)),
             _avatar_pill(member_id, _avatar_select_entity_id(member_id)),
-            _birthdate_pill(birthdate_entity_id),
+            _birthdate_pill(member_id, birthdate_entity_id),
         ],
     }
 
@@ -921,6 +971,10 @@ async def async_settings_view_cards(
     roster = entry.data[CONF_ROSTER]
     visible_roster = [only_member] if only_member is not None else roster
 
+    birthdate_scratch_id = ent_reg.async_get_entity_id(
+        "text", DOMAIN, f"{entry.entry_id}_{BIRTHDATE_SCRATCH_UNIQUE_ID}"
+    )
+
     cards: list[dict] = [{"type": "markdown", "content": "## Settings"}]
     member_stacks = []
     popups = []
@@ -931,6 +985,7 @@ async def async_settings_view_cards(
         member_stacks.append(_member_settings_stack(member_id, name_id, birthdate_id))
         popups.append(_avatar_picker_popup(member_id))
         popups.append(_color_picker_popup(member_id, _color_select_entity_id(member_id)))
+        popups.append(_birthdate_edit_popup(member_id, birthdate_id, birthdate_scratch_id))
 
     cards.append({"type": "grid", "columns": 4, "square": False, "cards": member_stacks})
     cards.extend(popups)

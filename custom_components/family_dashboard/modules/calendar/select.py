@@ -21,10 +21,10 @@ from ...const import (
     CALENDAR_VIEW_DEFAULT,
     CALENDAR_VIEW_OPTIONS,
     CONF_CALENDAR_ENTITY_ID,
-    CONF_FAMILY_CALENDAR_MEMBER_ID,
     CONF_ROSTER,
     DOMAIN,
 )
+from .dashboard import _family_calendar_entity
 from .events import async_create_event_from_scratch_fields
 
 
@@ -40,7 +40,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     async_add_entities(
-        [FamilyDashboardCalendarViewSelect(entry), FamilyDashboardEventCalendarSelect(entry)]
+        [
+            FamilyDashboardCalendarViewSelect(entry),
+            FamilyDashboardEventCalendarSelect(hass, entry),
+        ]
     )
 
     platform = entity_platform.async_get_current_platform()
@@ -86,9 +89,10 @@ class FamilyDashboardCalendarViewSelect(SelectEntity, RestoreEntity):
 
 class FamilyDashboardEventCalendarSelect(SelectEntity, RestoreEntity):
     """Which calendar the Add Event popup targets - every calendar-mapped member's name, plus
-    "Family" if a Family calendar is set. Options are computed from `entry.data` at setup
-    time (the roster's calendar mappings don't change without a reconfigure/restart, unlike
-    the avatar folder's live contents).
+    "Family" if a Family calendar is auto-detected (see `dashboard.py`'s
+    `_family_calendar_entity`). Options are computed once at setup time (the roster's calendar
+    mappings, and whether a Family calendar exists, don't change without a reconfigure/
+    restart, unlike the avatar folder's live contents).
     """
 
     _attr_has_entity_name = True
@@ -96,13 +100,13 @@ class FamilyDashboardEventCalendarSelect(SelectEntity, RestoreEntity):
     _attr_icon = "mdi:calendar-account"
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = event_calendar_unique_id(entry)
 
         roster = entry.data[CONF_ROSTER]
         options = [m["name"] for m in roster if m.get(CONF_CALENDAR_ENTITY_ID)]
-        if entry.data.get(CONF_FAMILY_CALENDAR_MEMBER_ID):
+        if _family_calendar_entity(hass) is not None:
             options.append("Family")
         self._attr_options = options or ["Family"]
         self._attr_current_option = self._attr_options[0]

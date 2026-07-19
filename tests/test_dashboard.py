@@ -79,7 +79,6 @@ async def test_nav_titles_are_uniform_and_never_name_a_person(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -119,7 +118,6 @@ async def test_strategy_user_bucket_map_covers_every_linked_member(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -155,7 +153,6 @@ async def test_disabled_linked_member_gets_no_personal_bucket_and_falls_back_to_
                 },
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -193,7 +190,6 @@ async def test_kiosk_bucket_visibility_excludes_linked_members(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -226,7 +222,6 @@ async def test_nav_row_and_subview_differ_kiosk_vs_personal_bucket(hass):
             "roster": [
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -274,7 +269,6 @@ async def test_kiosk_nav_is_hub_and_spoke_with_calendar_as_hub(hass):
         domain=DOMAIN,
         data={
             "roster": [_member("Ada", "ada", calendar_entity_id="calendar.ada_cal")],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -342,7 +336,6 @@ async def test_kiosk_calendar_has_toggle_filter_switches_for_every_mapped_member
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
                 _member("Bob", "bob"),  # no calendar - excluded entirely
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -412,8 +405,17 @@ async def test_kiosk_calendar_has_toggle_filter_switches_for_every_mapped_member
 
 
 async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
+    """A linked member's own personal Calendar tab shows their own calendar plus the
+    auto-detected shared Family calendar (any calendar.* entity whose own name is literally
+    "Family") - NOT any other roster member's own calendar. Replaces the earlier design where
+    one flagged roster member's own mapping doubled as the shared one - "Family" is now an
+    independent entity, detected by name, not tied to Grace (or anyone)."""
     ada_account = await hass.auth.async_create_user(name="Ada Account")
     await hass.auth.async_create_user(name="Kiosk Account")
+
+    # The household's shared calendar - auto-detected by name, independent of any roster
+    # member's own mapping (see modules/calendar/dashboard.py's _family_calendar_entity).
+    hass.states.async_set("calendar.family_shared", "off", {"friendly_name": "Family"})
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -422,7 +424,6 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": "grace",
         },
     )
     entry.add_to_hass(hass)
@@ -433,19 +434,25 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
     # Wrapped in config-template-card so the shared view-granularity selector
     # (select.family_dashboard_calendar_view) can template days/startingDay here too, same as
     # the Kiosk bucket's own card (a live-reported gap: a linked member's Calendar tab had no
-    # View: Month/Week/.../Today button at all) - but still no per-member toggle/filter
-    # switches, unlike Kiosk's card.
+    # View: Month/Week/.../Today button at all) - plus the Family overlay's own toggle switch,
+    # unlike a per-member toggle (nothing else here to filter - only ever one or two calendars
+    # shown in a personal bucket).
     template_card = next(
         c for c in ada_calendar_cards if c.get("type") == "custom:config-template-card"
     )
-    assert template_card["entities"] == ["select.family_dashboard_calendar_view"]
+    assert template_card["entities"] == [
+        "switch.family_dashboard_family_calendar_shown",
+        "select.family_dashboard_calendar_view",
+    ]
     week_planner = template_card["card"]
     assert week_planner["type"] == "custom:week-planner-card"
     assert [c["entity"] for c in week_planner["calendars"]] == [
         "calendar.family_dashboard_ada_calendar",
-        "calendar.family_dashboard_grace_calendar",
+        "calendar.family_shared",
     ]
-    assert not any("filter" in c for c in week_planner["calendars"])
+    ada_entry, family_entry = week_planner["calendars"]
+    assert "filter" not in ada_entry
+    assert "filter" in family_entry  # Family is toggleable, unlike a personal calendar here
 
     # The view-selector pill itself is present in Ada's own controls row too (nested inside
     # the horizontal-stack, not a top-level card).
@@ -481,7 +488,6 @@ async def test_holidays_overlay_shows_every_country_toggleable_on_both_bucket_ki
             "roster": [
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -532,7 +538,6 @@ async def test_calendar_controls_omitted_when_nobody_has_calendar_enabled(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id),  # no calendar, no chores
                 _member("Grace", "grace"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -564,7 +569,6 @@ async def test_lists_kiosk_grouped_by_header_personal_bucket_no_header(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, list_presets=["to_do", "shopping"]),
                 _member("Grace", "grace"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -632,7 +636,7 @@ async def test_lists_card_omitted_when_feature_disabled_despite_presets_set(hass
         "list_presets": ["shopping", "to_do"],
     }
     entry = MockConfigEntry(
-        domain=DOMAIN, data={"roster": [member], "family_calendar_member_id": None}
+        domain=DOMAIN, data={"roster": [member]}
     )
     entry.add_to_hass(hass)
 
@@ -656,7 +660,6 @@ async def test_settings_features_and_mapping_kiosk_only(hass):
         domain=DOMAIN,
         data={
             "roster": [_member("Ada", "ada", ha_user_id=ada_account.id, list_presets=["shopping"])],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -709,7 +712,6 @@ async def test_kiosk_chores_has_toggle_pills_parent_lock_and_pin_popup(hass):
                 {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
             ],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -784,7 +786,6 @@ async def test_kiosk_chores_shows_multiple_kids_side_by_side(hass):
                 {"chore_id": "dishes", "name": "Dishes", "points": 5, "frequency": "daily", "assigned_to": "grace"},
             ],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -819,7 +820,6 @@ async def test_settings_view_is_a_grid_of_per_member_name_color_avatar_stacks(ha
                 _member("Ada", "ada", calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -862,7 +862,6 @@ async def test_personal_settings_view_shows_only_own_member_not_everyone(hass):
                 _member("Ada", "ada", ha_user_id=ada_account.id, calendar_entity_id="calendar.ada_cal"),
                 _member("Grace", "grace", calendar_entity_id="calendar.grace_cal"),
             ],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -896,7 +895,6 @@ async def test_no_kiosk_bucket_when_every_active_user_is_linked(hass):
         domain=DOMAIN,
         data={
             "roster": [_member("Ada", "ada", ha_user_id=ada_account.id)],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -956,7 +954,6 @@ async def test_chores_rewards_management_section_kiosk_only(hass):
                 {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
             ],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
@@ -1002,7 +999,6 @@ async def test_unassigned_chore_is_settings_only_not_on_chores_tab(hass):
                 {"chore_id": "dishes", "name": "Dishes", "points": 5, "frequency": "daily", "assigned_to": None},
             ],
             "rewards": [],
-            "family_calendar_member_id": None,
         },
     )
     entry.add_to_hass(hass)
