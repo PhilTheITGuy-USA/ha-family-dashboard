@@ -59,6 +59,8 @@ async def async_setup_entry(
         FamilyDashboardPinEntryText(entry),
         NewChoreNameText(entry),
         NewRewardNameText(entry),
+        NewChoreScheduleText(entry),
+        ChoreScheduleScratchText(entry),
     ]
     entities.extend(ChoreNameText(entry, chore) for chore in entry.data.get(CONF_CHORES, []))
     entities.extend(RewardNameText(entry, reward) for reward in entry.data.get(CONF_REWARDS, []))
@@ -283,6 +285,69 @@ class NewChoreNameText(TextEntity):
 
     async def async_add_chore(self) -> None:
         await crud.async_create_chore_from_scratch_fields(self.hass, self._entry)
+
+
+class NewChoreScheduleText(TextEntity):
+    """Add Chore popup's optional scratch schedule field - a blank value means "every day"
+    (see `util.parse_schedule_days_text`). Deliberately NOT a `RestoreEntity`, cleared after
+    every submit, same shape as `NewChoreNameText`."""
+
+    _attr_has_entity_name = True
+    _attr_name = "New Chore Schedule"
+    _attr_icon = "mdi:calendar-week"
+    _attr_native_max = 60
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_new_chore_schedule"
+        self._attr_native_value = ""
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    async def async_set_value(self, value: str) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+
+
+class ChoreScheduleScratchText(TextEntity):
+    """Shared scratch field for EVERY existing chore's schedule-edit popup (`#schedule-
+    {chore_id}` in `modules/chores/dashboard.py`) - one entity, not one per chore, since only
+    one such popup is ever open at a time (same reasoning `FamilyDashboardPinEntryText`
+    already applies to its own shared numpad buffer). The Save button's service call
+    (`family_dashboard.set_chore_schedule_days`) targets the specific chore's task sensor, not
+    this entity, so which chore gets updated is determined by which row's Save button was
+    tapped, not by anything stored here. Deliberately NOT a `RestoreEntity` - ephemeral, same
+    as the PIN-entry buffer."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Chore Schedule Scratch"
+    _attr_icon = "mdi:calendar-week"
+    _attr_native_max = 60
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_chore_schedule_scratch"
+        self._attr_native_value = ""
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    async def async_set_value(self, value: str) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
 
 
 class NewRewardNameText(TextEntity):

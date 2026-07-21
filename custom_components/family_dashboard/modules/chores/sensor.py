@@ -30,19 +30,30 @@ import homeassistant.components.text as text_component
 import voluptuous as vol
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from ...const import CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from ...util import parse_schedule_days_text
 
 
 def _points_unique_id(entry: ConfigEntry, member_id: str) -> str:
     return f"{entry.entry_id}_{member_id}_points"
+
+
+def _day_of_week_unique_id(entry: ConfigEntry) -> str:
+    return f"{entry.entry_id}_day_of_week"
+
+
+def _schedule_scratch_unique_id(entry: ConfigEntry) -> str:
+    return f"{entry.entry_id}_chore_schedule_scratch"
 
 
 def _task_unique_id(entry: ConfigEntry, item_id: str, kind: str) -> str:
@@ -122,7 +133,7 @@ async def async_setup_entry(
         for reward in entry.data.get(CONF_REWARDS, [])
         if _assigned_member_has_chores(reward, roster_by_id)
     ]
-    async_add_entities([*points_sensors, *task_sensors])
+    async_add_entities([*points_sensors, *task_sensors, FamilyDashboardDayOfWeekSensor(entry)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -132,6 +143,9 @@ async def async_setup_entry(
         "adjust_points", {vol.Required("delta"): vol.Coerce(int)}, "async_adjust"
     )
     platform.async_register_entity_service("delete_task", {}, "async_delete")
+    platform.async_register_entity_service(
+        "set_chore_schedule_days", {}, "async_set_schedule_days"
+    )
 
 
 class FamilyDashboardPointsSensor(SensorEntity, RestoreEntity):
@@ -287,6 +301,40 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         self._attr_native_value = "denied"
         self.async_write_ha_state()
 
+    def _schedule_scratch_entity(self):
+        component = self.hass.data.get(text_component.DATA_COMPONENT)
+        if component is None:
+            return None
+        entity_id = er.async_get(self.hass).async_get_entity_id(
+            "text", DOMAIN, _schedule_scratch_unique_id(self._entry)
+        )
+        return component.get_entity(entity_id) if entity_id else None
+
+    async def async_set_schedule_days(self) -> None:
+        """Save button for a chore's `#schedule-{chore_id}` popup (see
+        `modules/chores/dashboard.py`) - reads the SHARED scratch field (only one such popup
+        is ever open at a time), parses it, and persists onto THIS chore (the row whose Save
+        button was tapped), same per-row targeting `family_dashboard.delete_task` already
+        uses. Rewards have no schedule concept - a no-op, not an error, since nothing in the
+        UI should ever call this on one anyway."""
+        if self._kind != "chore":
+            return
+
+        scratch_entity = self._schedule_scratch_entity()
+        raw_value = scratch_entity.native_value if scratch_entity else None
+        try:
+            schedule_days = parse_schedule_days_text(raw_value)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
+        from . import crud
+
+        await crud.async_update_chore_field(
+            self.hass, self._entry, self._item_id, schedule_days=schedule_days
+        )
+        if scratch_entity:
+            await scratch_entity.async_set_value("")
+
     async def async_delete(self) -> None:
         """Genuinely removes this chore/reward (`family_dashboard.delete_chore`/
         `delete_reward` - see the dashboard's Delete tile, gated behind a native Lovelace
@@ -302,3 +350,58 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
             await crud.async_delete_chore(self.hass, self._entry, self._item_id)
         else:
             await crud.async_delete_reward(self.hass, self._entry, self._item_id)
+
+
+class FamilyDashboardDayOfWeekSensor(SensorEntity):
+    """One per config entry - today's lowercase weekday name (`monday`..`sunday`), the single
+    source of truth `modules/chores/dashboard.py`'s `_member_task_cards` gates a scheduled
+    chore's `type: conditional` tile on. Always created whenever this platform sets up at all
+    (i.e. whenever any member has "chores" enabled), not only when a scheduled chore exists,
+    so adding a schedule to a chore later needs no new entity-creation side effect.
+
+    Not a `RestoreEntity` - its value is cheap to recompute and must never reflect a stale
+    pre-restart day. Rolls over at local midnight via `async_track_time_change` and
+    `async_write_ha_state()`, the same live-reactivity mechanism the Parent PIN gate's
+    `type: conditional` cards already rely on - no config-entry reload needed for a
+    scheduled chore's visibility to update as the day changes.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Day Of Week"
+    _attr_icon = "mdi:calendar-today"
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = _day_of_week_unique_id(entry)
+        self._unsub_midnight = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    @staticmethod
+    def _today_name() -> str:
+        return dt_util.now().strftime("%A").lower()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._attr_native_value = self._today_name()
+        self._unsub_midnight = async_track_time_change(
+            self.hass, self._handle_midnight, hour=0, minute=0, second=5
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_midnight is not None:
+            self._unsub_midnight()
+            self._unsub_midnight = None
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_midnight(self, _now) -> None:
+        self._attr_native_value = self._today_name()
+        self.async_write_ha_state()

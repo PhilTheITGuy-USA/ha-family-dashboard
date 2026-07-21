@@ -940,9 +940,13 @@ async def test_register_dashboard_is_real_and_idempotent(hass):
     assert saved2 == config2
 
 
-async def test_chores_rewards_management_section_kiosk_only(hass):
-    """Add/Modify/Delete for Chores & Rewards is Kiosk/parent-only, same as Features &
-    Mapping - never a linked member's own personal bucket."""
+async def test_chores_rewards_management_moved_behind_parent_pin(hass):
+    """Add/edit/delete for Chores & Rewards no longer lives in Settings at all (live-reported
+    gap: that location was Kiosk-only but had NO Parent PIN gate - any kid could add/
+    reassign/repoint/delete chores and rewards freely). It moved to the Chores tab, wrapped in
+    the SAME `binary_sensor.family_dashboard_parent_mode == "on"` conditional Parent Review
+    already uses - and like Parent Review, it's Kiosk-only, never a linked member's own
+    personal bucket."""
     kiosk_account = await hass.auth.async_create_user(name="Kiosk Account")
     ada_account = await hass.auth.async_create_user(name="Ada Account")
 
@@ -963,31 +967,47 @@ async def test_chores_rewards_management_section_kiosk_only(hass):
     config = await async_build_dashboard_config(hass, entry)
     views = _views_by_path(config)
 
+    # Gone from Settings entirely - not just re-gated in place.
     kiosk_settings = _view_cards(views["settings-kiosk"])
-    assert any(
+    assert not any(
         c.get("type") == "markdown" and "Chores & Rewards" in c.get("content", "")
         for c in kiosk_settings
     )
-    assert "family_dashboard_trash_name" in str(kiosk_settings)
+    assert "addchore" not in str(kiosk_settings)
+    assert "addreward" not in str(kiosk_settings)
+
+    # Present on the Kiosk Chores tab, wrapped in the Parent PIN conditional.
+    kiosk_chores = _view_cards(views["chores-kiosk"])
+    management_card = next(
+        c
+        for c in kiosk_chores
+        if c.get("type") == "conditional"
+        and c["conditions"] == [{"entity": "binary_sensor.family_dashboard_parent_mode", "state": "on"}]
+        and "Manage Chores & Rewards" in str(c["card"])
+    )
+    assert "family_dashboard_trash_name" in str(management_card)
     assert any(
-        c.get("type") == "custom:bubble-card" and c.get("hash") == "#addchore" for c in kiosk_settings
+        cc.get("type") == "custom:bubble-card" and cc.get("hash") == "#addchore"
+        for cc in management_card["card"]["cards"]
+    )
+    assert any(
+        cc.get("type") == "custom:bubble-card" and cc.get("hash") == "#addreward"
+        for cc in management_card["card"]["cards"]
     )
 
-    ada_settings = _view_cards(views["settings-ada"])
-    assert not any(
-        c.get("type") == "markdown" and "Chores & Rewards" in c.get("content", "")
-        for c in ada_settings
-    )
-    assert "trash" not in str(ada_settings).lower()
+    # Never on a linked member's own personal Chores bucket, same as Parent Review.
+    ada_chores = _view_cards(views["chores-ada"])
+    assert not any("Manage Chores & Rewards" in str(c) for c in ada_chores)
+    assert not any(c.get("hash") == "#addchore" for c in ada_chores)
 
     assert kiosk_account.id  # sanity: real account, not a placeholder
 
 
-async def test_unassigned_chore_is_settings_only_not_on_chores_tab(hass):
+async def test_unassigned_chore_is_management_only_not_a_chores_tab_column(hass):
     """An unassigned chore/reward (explicit user request - no owner required) has entities
-    but no member column to appear in on the Chores tab - `_member_task_cards`'s per-member
-    filtering never matches `None`, so it's editable/deletable from Settings only, exactly
-    the agreed "Settings-only until assigned" scope."""
+    but no member column to appear in - `_member_task_cards`'s per-member filtering never
+    matches `None`. It's still editable/deletable, just from the PIN-gated Manage Chores &
+    Rewards section (moved off Settings 2026-07-20), not from any per-kid column."""
     await hass.auth.async_create_user(name="Kiosk Account")
 
     entry = MockConfigEntry(
@@ -1005,13 +1025,40 @@ async def test_unassigned_chore_is_settings_only_not_on_chores_tab(hass):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # Entities for the unassigned chore DO exist (editable/deletable from Settings).
+    # Entities for the unassigned chore DO exist (editable/deletable from Manage Chores &
+    # Rewards, once parent-unlocked).
     assert hass.states.get("sensor.family_dashboard_dishes") is not None
 
     config = await async_build_dashboard_config(hass, entry)
     kiosk_chores = _view_cards(_views_by_path(config)["chores-kiosk"])
-    assert "dishes" not in str(kiosk_chores).lower()
-    assert "trash" in str(kiosk_chores).lower()
 
+    # Absent from every per-kid column (each its own conditional keyed on that member's own
+    # `..._shown` switch, distinct from the management section's `parent_mode` conditional).
+    # Per-kid columns are nested one level inside a horizontal-stack (same flattening
+    # `test_kiosk_chores_has_toggle_pills_parent_lock_and_pin_popup` already needs), not
+    # top-level cards.
+    nested_cards = [c for hs in kiosk_chores if hs.get("type") == "horizontal-stack" for c in hs["cards"]]
+    member_columns = [
+        c
+        for c in nested_cards
+        if c.get("type") == "conditional"
+        and c["conditions"][0]["entity"] == "switch.family_dashboard_ada_shown"
+    ]
+    assert member_columns  # Ada's own column exists (holds "trash")
+    assert not any("dishes" in str(c).lower() for c in member_columns)
+    assert any("trash" in str(c).lower() for c in member_columns)
+
+    # Present in the PIN-gated management section instead - NOT Parent Review's own card,
+    # which shares the identical `parent_mode` conditional and would otherwise match first.
+    management_card = next(
+        c
+        for c in kiosk_chores
+        if c.get("type") == "conditional"
+        and c["conditions"] == [{"entity": "binary_sensor.family_dashboard_parent_mode", "state": "on"}]
+        and "Manage Chores & Rewards" in str(c["card"])
+    )
+    assert "family_dashboard_dishes_name" in str(management_card)
+
+    # Gone from Settings entirely.
     kiosk_settings = _view_cards(_views_by_path(config)["settings-kiosk"])
-    assert "family_dashboard_dishes_name" in str(kiosk_settings)
+    assert "family_dashboard_dishes_name" not in str(kiosk_settings)

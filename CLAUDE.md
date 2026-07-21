@@ -148,6 +148,18 @@ confirm the resulting entities/config entry via `GET /api/states` /
     scratch-field "Add" popups). Each module registers and handles its own services in its
     own `async_setup_entry` — this file only declares the schemas HA's service-call UI and
     validation use.
+  - Chores support an OPTIONAL per-chore `schedule_days` field (2026-07-21,
+    `modules/chores/dashboard.py`/`sensor.py`) — absent/`None` (every chore before this
+    feature) means visible/claimable every day, unchanged; a list of weekdays means only
+    those days. Splitting one chore across multiple kids (e.g. "Dishes" Mon/Wed/Fri for one
+    kid, Tue/Thu/Sat for another) means creating one independent chore record per kid via
+    "Add Chore" — NOT a single record holding a day→assignee map — since claim/approve/
+    points has no "who claimed it today" concept separate from a chore's fixed
+    `assigned_to` (`FamilyDashboardTaskSensor.__init__` fixes it once, permanently). Gating
+    is UI-only (one `type: conditional` per configured day, keyed on a new household
+    `sensor.<device>_day_of_week` entity that rolls over at local midnight via
+    `async_track_time_change`) — same "no backend claim-locking" philosophy `frequency`
+    already established, not new enforcement.
   - `www/vendor/` — vendored, unmodified third-party Lovelace cards (`button-card`,
     `bubble-card`, `config-template-card`, `week-planner-card`) the generated dashboard
     depends on, bundled so the dashboard works with no separate manual HACS install (see
@@ -160,7 +172,8 @@ confirm the resulting entities/config entry via `GET /api/states` /
   `test_roster.py`, `test_unmapped_users.py`, `test_notify_resolution.py`,
   `test_holidays_setup.py`, and per-module `test_<module>_module.py` plus targeted
   `test_<module>_<concern>.py` files for behavior that doesn't fit the main module test file
-  (e.g. `test_calendar_extras.py`, `test_birthdays_calendar.py`, `test_chores_crud.py`).
+  (e.g. `test_calendar_extras.py`, `test_birthdays_calendar.py`, `test_chores_crud.py`,
+  `test_chores_scheduling.py`).
 - `claude-code-kickoff.md` — where to start; links to the full planning docs (build brief,
   architecture/rebuild plan, wizard flowchart) at
   `C:\Users\philt\CLAUDE_FOLDER\Family Dashboard Mockups\`. Those docs are living and

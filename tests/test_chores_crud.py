@@ -252,6 +252,41 @@ async def test_create_chore_from_scratch_fields_with_unassigned_option(hass: Hom
     assert added["assigned_to"] is None
 
 
+async def test_add_chore_with_schedule_days_persists(hass: HomeAssistant):
+    roster = [_member("ada", "Ada")]
+    entry = await _setup_entry(hass, roster)
+
+    chore_id = await crud.async_add_chore(
+        hass,
+        entry,
+        name="Dishes",
+        points=5,
+        frequency="daily",
+        assigned_to="ada",
+        schedule_days=["monday", "wednesday", "friday"],
+    )
+    await hass.async_block_till_done()
+
+    added = next(c for c in entry.data["chores"] if c["chore_id"] == chore_id)
+    assert added["schedule_days"] == ["monday", "wednesday", "friday"]
+
+
+async def test_add_chore_without_schedule_days_omits_key(hass: HomeAssistant):
+    """Backward compatibility: a plain `async_add_chore` call (no `schedule_days` kwarg)
+    produces the exact same dict shape as before this feature existed - no `schedule_days`
+    key at all, not an explicit `None` - so every pre-existing exact-dict-equality assertion
+    elsewhere in this suite keeps passing unmodified."""
+    roster = [_member("ada", "Ada")]
+    entry = await _setup_entry(hass, roster)
+
+    await crud.async_add_chore(hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada")
+    await hass.async_block_till_done()
+
+    assert entry.data["chores"] == [
+        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
+    ]
+
+
 async def test_reassign_existing_chore_to_unassigned_and_back(hass: HomeAssistant):
     roster = [_member("ada", "Ada")]
     chores = [{"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}]

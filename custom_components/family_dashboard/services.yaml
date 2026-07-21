@@ -138,7 +138,9 @@ add_chore:
   name: Add chore
   description: >-
     Create a new chore from the Add Chore popup's scratch fields (name, points, frequency,
-    assigned-to), then clears them. No-ops silently if the name field is left blank.
+    assigned-to, optional schedule), then clears them. No-ops silently if the name field is
+    left blank; an unparsable schedule field falls back to "every day" rather than blocking
+    the add.
   target:
     entity:
       domain: text
@@ -152,6 +154,18 @@ add_reward:
   target:
     entity:
       domain: text
+      integration: family_dashboard
+
+set_chore_schedule_days:
+  name: Set chore schedule days
+  description: >-
+    Set the targeted chore's optional day-of-week schedule from the shared schedule-edit
+    popup's scratch text field (comma-separated day names or 3-letter abbreviations), then
+    clears it. Leaving the field blank makes the chore visible/claimable every day (no
+    schedule). No-op for rewards.
+  target:
+    entity:
+      domain: sensor
       integration: family_dashboard
 
 set_birthdate:

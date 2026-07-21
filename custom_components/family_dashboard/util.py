@@ -42,6 +42,49 @@ def iso_to_ddmmyyyy(value: str) -> str:
     return f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year:04d}"
 
 
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_WEEKDAY_ABBREVS = {day[:3]: day for day in WEEKDAYS}
+
+
+class InvalidScheduleDaysText(ValueError):
+    """Raised by `parse_schedule_days_text` for text that isn't a recognizable list of
+    weekdays."""
+
+
+SCHEDULE_DAYS_FORMAT_ERROR = (
+    "Enter comma-separated days (Mon, Tue, Wed, Thu, Fri, Sat, Sun), or leave blank for every day"
+)
+
+
+def parse_schedule_days_text(value: str | None) -> list[str] | None:
+    """Converts a typed comma/space-separated list of weekday names or 3-letter abbreviations
+    (case-insensitive) into a `schedule_days` list, normalized to full lowercase names and
+    ordered Monday->Sunday regardless of input order. Blank/whitespace-only input means "every
+    day" - a chore's optional schedule is opt-in, so an empty field is a valid, common case,
+    not an error (mirrors `ddmmyyyy_to_iso`'s own "blank means no value" convention). Raises
+    `InvalidScheduleDaysText` (message `SCHEDULE_DAYS_FORMAT_ERROR`) for any unrecognized
+    token."""
+    if not value or not value.strip():
+        return None
+    tokens = [t.strip().lower() for t in re.split(r"[,\s]+", value.strip()) if t.strip()]
+    days: set[str] = set()
+    for token in tokens:
+        if token in WEEKDAYS:
+            days.add(token)
+        elif token[:3] in _WEEKDAY_ABBREVS:
+            days.add(_WEEKDAY_ABBREVS[token[:3]])
+        else:
+            raise InvalidScheduleDaysText(SCHEDULE_DAYS_FORMAT_ERROR)
+    return [day for day in WEEKDAYS if day in days] or None
+
+
+def format_schedule_days(days: list[str] | None) -> str:
+    """The inverse display helper - `_chore_row`'s "Schedule" pill text."""
+    if not days:
+        return "Every day"
+    return ", ".join(day[:3].capitalize() for day in days)
+
+
 def slugify_unique(name: str, existing: set[str]) -> str:
     """Turn a display name into a stable, unique snake_case id.
 

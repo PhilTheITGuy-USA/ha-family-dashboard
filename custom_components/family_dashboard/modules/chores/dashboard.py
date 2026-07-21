@@ -10,14 +10,19 @@ Kiosk bucket: one column per kid (member with "chores" enabled), each wrapped in
 the same toggle-filter mechanism Calendar uses, just via a whole-card conditional instead of
 a per-entry `filter:` string (Chores has no equivalent to week-planner-card's overlay, so
 showing/hiding the whole column is the natural fit). Plus a Parent lock/unlock control and,
-once unlocked, an inline Parent Review section - both ported from the legacy
+once unlocked, an inline Parent Review section AND a Chores & Rewards management section
+(Add/edit/delete chores and rewards, `async_chores_rewards_management_card`) - both gated on
+the SAME `binary_sensor.family_dashboard_parent_mode` conditional, both ported from the legacy
 `REPO/ha-family-hub/dashboards/family-hub.yaml`'s proven mechanism: a `custom:bubble-card`
 pop-up (already installed via HACS) anchored at `#parentpin` for the PIN numpad (button-card's
 own `[[[ ]]]` template syntax for the lock button's state-dependent name/icon/color/tap_action,
 exactly as legacy did it - no config-template-card needed for this piece), and each pending
 claim's Approve/Deny row wrapped in its own `type: conditional` keyed on that item's sensor
 state being "claimed" - so the Review list updates live as claims come in/get resolved,
-without needing the dashboard to regenerate.
+without needing the dashboard to regenerate. The management section moved here from
+`modules/settings/dashboard.py` on 2026-07-20 (live-reported: that Settings location was
+Kiosk-only but had no PIN gate at all - any kid could add/reassign/repoint/delete chores and
+rewards freely).
 
 Personal buckets: just that member's own points + chore/reward cards, no toggle, no Parent
 controls (the PIN gate and Review are Kiosk-bucket-only, per the mockup and the rebuild plan's
@@ -30,6 +35,17 @@ constraint that shaped the per-item Modify fields), because each item's own Reas
 always present in its Review row and the Deny action reads it live via button-card's `[[[ ]]]`
 templating in `tap_action.data` (already proven in this file for `async_parent_lock_card`'s
 state-dependent action/color) rather than needing a shared scratch field pre-loaded first.
+
+Chores can optionally be day-of-week scheduled (2026-07-21, `_member_task_cards`): splitting
+one chore across multiple kids means creating one independent chore record per kid, each with
+its own `schedule_days` subset (e.g. two "Dishes" chores, Tristan Mon/Wed/Fri and Harlee
+Tue/Thu/Sat) - NOT one record holding a day->assignee map, since claim/approve/points has no
+"who claimed it today" concept separate from a chore's fixed `assigned_to` (see
+`modules/chores/sensor.py`'s docstring). A scheduled chore's tile is wrapped in one
+`type: conditional` per configured day, keyed on the household's day-of-week sensor
+(`FamilyDashboardDayOfWeekSensor`) - the same conditional mechanism already proven for the
+Parent PIN gate, just watching a different entity. An unscheduled chore (`schedule_days`
+absent/`None`, the default) is unaffected - visible every day, exactly as before this feature.
 """
 from __future__ import annotations
 
@@ -38,8 +54,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from ...const import CONF_CHORES, CONF_FEATURES, CONF_REWARDS, DOMAIN
+from ...util import format_schedule_days
 from ..calendar.dashboard import member_avatar_toggle_pill
-from .sensor import _deny_reason_unique_id, _points_unique_id, _task_unique_id
+from .sensor import (
+    _day_of_week_unique_id,
+    _deny_reason_unique_id,
+    _points_unique_id,
+    _schedule_scratch_unique_id,
+    _task_unique_id,
+)
 
 
 def _shown_switch_entity_id(member_id: str) -> str:
@@ -121,7 +144,16 @@ def _tile(entity_id: str, name: str, icon: str, tap_target: str | None = None) -
 
 async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: dict) -> list[dict]:
     """Points tile plus one tile per chore/reward assigned to this member. Empty if they have
-    neither chores nor rewards assigned (still shows Points if they have the feature)."""
+    neither chores nor rewards assigned (still shows Points if they have the feature).
+
+    A chore with `schedule_days` set (see `util.parse_schedule_days_text`) is only visible on
+    those days: its tile is wrapped in one `type: conditional` per configured day, keyed on
+    the household's `FamilyDashboardDayOfWeekSensor` state - deliberately N separate
+    single-state conditionals rather than one multi-value condition, since nothing in this
+    codebase currently uses or has verified list-based OR state-matching, while this exact
+    single-state conditional shape is already proven for the Parent PIN gate. An unscheduled
+    chore (`schedule_days` absent/`None` - every existing chore before this feature, and the
+    default for every new one) renders exactly as before, unconditionally."""
     ent_reg = er.async_get(hass)
     cards: list[dict] = []
 
@@ -134,12 +166,33 @@ async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: di
     chores = [c for c in entry.data.get(CONF_CHORES, []) if c["assigned_to"] == member["member_id"]]
     if chores:
         cards.append({"type": "markdown", "content": "#### Chores"})
+        day_of_week_entity_id = None
         for chore in chores:
             task_uid = _task_unique_id(entry, chore["chore_id"], "chore")
             sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, task_uid)
             claim_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{task_uid}_claim")
-            if sensor_id:
-                cards.append(_tile(sensor_id, chore["name"], "mdi:broom", tap_target=claim_id))
+            if not sensor_id:
+                continue
+            tile = _tile(sensor_id, chore["name"], "mdi:broom", tap_target=claim_id)
+            schedule_days = chore.get("schedule_days")
+            if not schedule_days:
+                cards.append(tile)
+                continue
+            if day_of_week_entity_id is None:
+                day_of_week_entity_id = ent_reg.async_get_entity_id(
+                    "sensor", DOMAIN, _day_of_week_unique_id(entry)
+                )
+            if not day_of_week_entity_id:
+                cards.append(tile)
+                continue
+            for day in schedule_days:
+                cards.append(
+                    {
+                        "type": "conditional",
+                        "conditions": [{"entity": day_of_week_entity_id, "state": day}],
+                        "card": tile,
+                    }
+                )
 
     rewards = [r for r in entry.data.get(CONF_REWARDS, []) if r["assigned_to"] == member["member_id"]]
     if rewards:
@@ -333,7 +386,9 @@ def _pin_clear_button() -> dict:
                 {"box-shadow": "none"},
                 {"background-color": "rgba(255,255,255,0.7)"},
             ],
-            "name": [{"color": "#5a6270"}, {"font-size": "14px"}, {"font-weight": "600"}],
+            # 14px -> 16px (2026-07-20 kiosk legibility pass) - matches the digit buttons'
+            # own 22px better than the old mismatch did.
+            "name": [{"color": "#5a6270"}, {"font-size": "16px"}, {"font-weight": "600"}],
         },
     }
 
@@ -434,11 +489,330 @@ def async_parent_lock_card() -> dict:
             "name": [
                 {"color": "white"},
                 {"font-weight": "600"},
-                {"font-size": "13px"},
+                # 13px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
+                # `_pill_styles` for why.
+                {"font-size": "16px"},
                 {"padding-left": "6px"},
                 {"white-space": "nowrap"},
             ],
         },
+    }
+
+
+_MANAGE_NAV_BUTTON_STYLE = {
+    "card": [
+        {"border-radius": "26px"},
+        {"height": "52px"},
+        {"padding": "4px 14px 4px 6px"},
+        {"box-shadow": "none"},
+        {"background-color": "#5a6270"},
+    ],
+    "grid": [
+        {"grid-template-areas": "'i n'"},
+        {"grid-template-columns": "42px auto"},
+        {"align-items": "center"},
+        {"justify-items": "start"},
+    ],
+    "icon": [{"width": "30px"}, {"color": "white"}],
+    # 16px, not the 13px `modules/settings/dashboard.py`'s original `_NAV_BUTTON_STYLE` had -
+    # matches this tab's own 2026-07-20 kiosk legibility pass (every other pill here is 16px)
+    # now that this section lives here instead of Settings.
+    "name": [{"color": "white"}, {"font-weight": "600"}, {"font-size": "16px"}],
+}
+
+_MANAGE_FIELD_PILL_STYLE = {
+    "card": [
+        {"border-radius": "16px"},
+        {"height": "44px"},
+        {"padding": "4px 12px 4px 6px"},
+        {"box-shadow": "none"},
+        {"background-color": "white"},
+    ],
+    "grid": [
+        {"grid-template-areas": "'i n'"},
+        {"grid-template-columns": "30px auto"},
+        {"align-items": "center"},
+        {"justify-items": "start"},
+    ],
+    "icon": [{"width": "18px"}, {"color": "#8a8a8a"}],
+    "name": [
+        {"color": "#2b2b2b"},
+        # 16px, not 13px - same legibility-pass reasoning as _MANAGE_NAV_BUTTON_STYLE above.
+        {"font-size": "16px"},
+        {"font-weight": "600"},
+        {"padding-left": "4px"},
+        {"white-space": "nowrap"},
+    ],
+}
+
+
+def _manage_nav_button(name: str, icon: str, hash_suffix: str) -> dict:
+    """Opens a Chores & Rewards management popup (Add Chore/Add Reward) - same visual shape
+    as `async_change_pin_button` above, kept as a small local copy over a cross-module
+    import since it's just markup (this codebase's established convention, e.g.
+    `_avatar_header`'s own duplication between this file and `modules/settings/dashboard.py`).
+    """
+    return {
+        "type": "custom:button-card",
+        "name": name,
+        "icon": icon,
+        "show_name": True,
+        "show_icon": True,
+        "tap_action": {"action": "navigate", "navigation_path": f"#{hash_suffix}"},
+        "styles": _MANAGE_NAV_BUTTON_STYLE,
+    }
+
+
+def _field_pill(label: str, entity_id: str | None) -> dict:
+    """A generic "<Label>: <value>" pill opening the entity's own native more-info dialog -
+    used for chore/reward fields (name/points-or-cost/frequency/assigned-to). `entity_id` can
+    be `None` before the platform has forwarded - degrades gracefully instead of crashing."""
+    entity_id = entity_id or ""
+    return {
+        "type": "custom:button-card",
+        "entity": entity_id,
+        "show_name": True,
+        "show_icon": False,
+        "name": (
+            "[[[ var s = states['" + entity_id + "']; "
+            "return '" + label + ": ' + (s ? s.state : ''); ]]]"
+        ),
+        "tap_action": {"action": "more-info"},
+        "styles": _MANAGE_FIELD_PILL_STYLE,
+    }
+
+
+def _manage_delete_tile(entity_id: str | None, item_name: str) -> dict:
+    """Genuinely deletes a chore/reward (`family_dashboard.delete_task` - see `crud.py`'s
+    module docstring for why this is a real removal, not `hidden_by`) - gated behind a native
+    Lovelace `confirmation:` prompt (stock tap_action feature, no custom popup needed) since
+    there's no undo. Now doubly-gated in practice: this whole card only renders once the
+    Parent PIN is unlocked (see `async_chores_rewards_management_card`)."""
+    entity_id = entity_id or ""
+    return {
+        "type": "custom:button-card",
+        "name": "Delete",
+        "icon": "mdi:trash-can",
+        "show_name": True,
+        "show_icon": True,
+        "tap_action": {
+            "action": "perform-action",
+            "perform_action": "family_dashboard.delete_task",
+            "target": {"entity_id": entity_id},
+            "confirmation": {"text": f"Delete '{item_name}'? This cannot be undone."},
+        },
+        "styles": {
+            "card": [
+                {"border-radius": "16px"},
+                {"height": "44px"},
+                {"padding": "4px 12px 4px 6px"},
+                {"box-shadow": "none"},
+                {"background-color": "#d9534f"},
+            ],
+            "grid": [
+                {"grid-template-areas": "'i n'"},
+                {"grid-template-columns": "30px auto"},
+                {"align-items": "center"},
+                {"justify-items": "start"},
+            ],
+            "icon": [{"width": "18px"}, {"color": "white"}],
+            "name": [
+                {"color": "white"},
+                {"font-size": "16px"},
+                {"font-weight": "600"},
+                {"padding-left": "4px"},
+            ],
+        },
+    }
+
+
+def _schedule_pill(chore: dict, chore_id: str) -> dict:
+    """Like `_field_pill`, but for `schedule_days` - there's no single entity holding this
+    value to open a native more-info dialog on (it's derived from `entry.data`, not backed by
+    its own per-chore entity), so this navigates to the `#schedule-{chore_id}` edit popup
+    instead, same reasoning `modules/settings/dashboard.py`'s birthdate pill already
+    established for a field with no natural entity of its own."""
+    return {
+        "type": "custom:button-card",
+        "show_name": True,
+        "show_icon": False,
+        "name": f"Schedule: {format_schedule_days(chore.get('schedule_days'))}",
+        "tap_action": {"action": "navigate", "navigation_path": f"#schedule-{chore_id}"},
+        "styles": _MANAGE_FIELD_PILL_STYLE,
+    }
+
+
+def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
+    chore_id = chore["chore_id"]
+    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{chore_id}_name")
+    points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{chore_id}_points")
+    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_frequency")
+    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_assigned_to")
+    sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore")
+    return {
+        "type": "horizontal-stack",
+        "cards": [
+            _field_pill("Name", name_id),
+            _field_pill("Points", points_id),
+            _field_pill("Frequency", frequency_id),
+            _field_pill("Assigned To", assigned_id),
+            _schedule_pill(chore, chore_id),
+            _manage_delete_tile(sensor_id, chore["name"]),
+        ],
+    }
+
+
+def _schedule_edit_popup(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
+    """Save button calls `family_dashboard.set_chore_schedule_days` targeted at THIS chore's
+    own task sensor (same per-row targeting `_manage_delete_tile` already does), reading the
+    SHARED `ChoreScheduleScratchText` scratch field (only one such popup is ever open at a
+    time - see that entity's own docstring)."""
+    chore_id = chore["chore_id"]
+    scratch_id = ent_reg.async_get_entity_id("text", DOMAIN, _schedule_scratch_unique_id(entry)) or ""
+    sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore") or ""
+    return {
+        "type": "custom:bubble-card",
+        "card_type": "pop-up",
+        "hash": f"#schedule-{chore_id}",
+        "name": f"{chore['name']} Schedule",
+        "icon": "mdi:calendar-week",
+        "cards": [
+            {
+                "type": "markdown",
+                "content": (
+                    "Comma-separated days - Mon, Tue, Wed, Thu, Fri, Sat, Sun - or leave "
+                    "blank for every day."
+                ),
+            },
+            {"type": "entities", "entities": [{"entity": scratch_id, "name": "Days"}], "show_header_toggle": False},
+            {
+                "type": "button",
+                "name": "Save",
+                "icon": "mdi:content-save",
+                "tap_action": {
+                    "action": "perform-action",
+                    "perform_action": "family_dashboard.set_chore_schedule_days",
+                    "target": {"entity_id": sensor_id},
+                },
+            },
+        ],
+    }
+
+
+def _reward_row(ent_reg, entry: ConfigEntry, reward: dict) -> dict:
+    reward_id = reward["reward_id"]
+    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{reward_id}_name")
+    cost_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{reward_id}_cost")
+    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{reward_id}_assigned_to")
+    sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{reward_id}_reward")
+    return {
+        "type": "horizontal-stack",
+        "cards": [
+            _field_pill("Name", name_id),
+            _field_pill("Cost", cost_id),
+            _field_pill("Assigned To", assigned_id),
+            _manage_delete_tile(sensor_id, reward["name"]),
+        ],
+    }
+
+
+def _add_item_popup(
+    *, hash_suffix: str, title: str, icon: str, entities: list[dict], service: str
+) -> dict:
+    return {
+        "type": "custom:bubble-card",
+        "card_type": "pop-up",
+        "hash": f"#{hash_suffix}",
+        "name": title,
+        "icon": icon,
+        "cards": [
+            {"type": "entities", "entities": entities, "show_header_toggle": False},
+            {
+                "type": "button",
+                "name": title,
+                "icon": icon,
+                "tap_action": {
+                    "action": "perform-action",
+                    "perform_action": service,
+                    "target": {"entity_id": entities[0]["entity"]},
+                },
+            },
+        ],
+    }
+
+
+def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
+    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_name") or ""
+    points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_chore_points") or ""
+    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_frequency") or ""
+    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_assigned_to") or ""
+    schedule_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_schedule") or ""
+    return _add_item_popup(
+        hash_suffix="addchore",
+        title="Add Chore",
+        icon="mdi:broom",
+        entities=[
+            {"entity": name_id, "name": "Name"},
+            {"entity": points_id, "name": "Points"},
+            {"entity": frequency_id, "name": "Frequency"},
+            {"entity": assigned_id, "name": "Assigned To"},
+            {"entity": schedule_id, "name": "Schedule (optional - blank = every day)"},
+        ],
+        service="family_dashboard.add_chore",
+    )
+
+
+def _add_reward_popup(ent_reg, entry: ConfigEntry) -> dict:
+    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_reward_name") or ""
+    cost_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_reward_cost") or ""
+    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_reward_assigned_to") or ""
+    return _add_item_popup(
+        hash_suffix="addreward",
+        title="Add Reward",
+        icon="mdi:gift",
+        entities=[
+            {"entity": name_id, "name": "Name"},
+            {"entity": cost_id, "name": "Cost"},
+            {"entity": assigned_id, "name": "Assigned To"},
+        ],
+        service="family_dashboard.add_reward",
+    )
+
+
+async def async_chores_rewards_management_card(
+    hass: HomeAssistant, entry: ConfigEntry, chores_members: list[dict]
+) -> dict:
+    """Add Chore/Add Reward + one editable row per existing chore/reward (including
+    Unassigned ones, which have no per-kid column to live in otherwise - see
+    `_member_task_cards`) + Delete. Moved here from `modules/settings/dashboard.py`
+    (2026-07-20, live-reported gap: that location was Kiosk-only but had NO Parent PIN gate
+    at all, so any kid could add/reassign/repoint/delete chores and rewards) - same PIN gate
+    as `async_parent_review_card`, appended right after it in `async_kiosk_chores_cards` so
+    review and management live in the same locked section, matching the user's own framing
+    ("these should fall under the Parent Review section")."""
+    ent_reg = er.async_get(hass)
+    cards: list[dict] = [
+        {"type": "markdown", "content": "## Manage Chores & Rewards"},
+        {
+            "type": "horizontal-stack",
+            "cards": [
+                _manage_nav_button("Add Chore", "mdi:broom", "addchore"),
+                _manage_nav_button("Add Reward", "mdi:gift", "addreward"),
+            ],
+        },
+    ]
+    for chore in entry.data.get(CONF_CHORES, []):
+        cards.append(_chore_row(ent_reg, entry, chore))
+        cards.append(_schedule_edit_popup(ent_reg, entry, chore))
+    for reward in entry.data.get(CONF_REWARDS, []):
+        cards.append(_reward_row(ent_reg, entry, reward))
+    cards.append(_add_chore_popup(ent_reg, entry))
+    cards.append(_add_reward_popup(ent_reg, entry))
+
+    return {
+        "type": "conditional",
+        "conditions": [{"entity": "binary_sensor.family_dashboard_parent_mode", "state": "on"}],
+        "card": {"type": "vertical-stack", "cards": cards},
     }
 
 
@@ -447,8 +821,10 @@ async def async_kiosk_chores_cards(
 ) -> list[dict]:
     """The Kiosk bucket's full Chores tab content: toggle-filter pills, per-kid columns
     (each hidden/shown by its own switch), the Parent lock control, the inline Review
-    section, and the PIN pop-up. Returns an empty list if nobody has chores enabled - the
-    caller shows a fallback card instead.
+    section, the Chores & Rewards management section (Add/edit/delete - moved here from
+    Settings 2026-07-20, see `async_chores_rewards_management_card`), and the PIN pop-up.
+    Returns an empty list if nobody has chores enabled - the caller shows a fallback card
+    instead.
     """
     if not chores_members:
         return []
@@ -493,6 +869,7 @@ async def async_kiosk_chores_cards(
         cards.append({"type": "horizontal-stack", "cards": member_columns})
 
     cards.append(await async_parent_review_card(hass, entry, chores_members))
+    cards.append(await async_chores_rewards_management_card(hass, entry, chores_members))
     cards.append(async_pin_popup_card())
     return cards
 
@@ -522,7 +899,9 @@ def async_change_pin_button() -> dict:
                 {"justify-items": "start"},
             ],
             "icon": [{"width": "30px"}, {"color": "white"}],
-            "name": [{"color": "white"}, {"font-weight": "600"}, {"font-size": "13px"}],
+            # 13px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
+            # `_pill_styles` for why.
+            "name": [{"color": "white"}, {"font-weight": "600"}, {"font-size": "16px"}],
         },
     }
 

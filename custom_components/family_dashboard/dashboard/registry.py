@@ -227,7 +227,13 @@ def _pill_styles(is_current: bool) -> dict:
         "icon": [{"width": "30px"}, {"color": "white" if is_current else "#8a8a8a"}],
         "name": [
             {"color": "white" if is_current else "#555"},
-            {"font-size": "13px"},
+            # 13px -> 16px (2026-07-20 kiosk legibility pass): the primary nav row's own
+            # 52px-tall pill made this look disproportionately small on a 1920x1080 15"
+            # kiosk panel - every other "52px pill, tiny name text" spot across Calendar/
+            # Chores got the same bump, see modules/calendar/dashboard.py's
+            # `_toggle_pill_base_styles`/`_nav_style_button` and modules/chores/dashboard.py's
+            # parent-lock/PIN-change buttons.
+            {"font-size": "16px"},
             {"font-weight": "600"},
             {"padding-left": "4px"},
             {"white-space": "nowrap"},

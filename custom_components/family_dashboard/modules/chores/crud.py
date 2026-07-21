@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from ...const import CHORE_FREQUENCIES, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
-from ...util import slugify_unique
+from ...util import parse_schedule_days_text, slugify_unique
 from .sensor import _deny_reason_unique_id, _task_unique_id
 
 _COMPONENT_MAP = {
@@ -76,19 +76,24 @@ async def async_add_chore(
     points: int,
     frequency: str,
     assigned_to: str | None,
+    schedule_days: list[str] | None = None,
 ) -> str:
     existing_ids = {c["chore_id"] for c in entry.data.get(CONF_CHORES, [])}
     chore_id = slugify_unique(name, existing_ids)
-    chores = [
-        *entry.data.get(CONF_CHORES, []),
-        {
-            "chore_id": chore_id,
-            "name": name,
-            "points": points,
-            "frequency": frequency,
-            "assigned_to": assigned_to,
-        },
-    ]
+    new_chore = {
+        "chore_id": chore_id,
+        "name": name,
+        "points": points,
+        "frequency": frequency,
+        "assigned_to": assigned_to,
+    }
+    # Omitted (not set to `None`) when absent, not included as an explicit `None` key - keeps
+    # every unscheduled chore's dict shape byte-for-byte identical to before this field
+    # existed, since `chore.get("schedule_days")` everywhere else treats a missing key and an
+    # explicit `None` identically anyway.
+    if schedule_days:
+        new_chore["schedule_days"] = schedule_days
+    chores = [*entry.data.get(CONF_CHORES, []), new_chore]
     await _async_persist(hass, entry, **{CONF_CHORES: chores})
     return chore_id
 
@@ -186,6 +191,7 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
     points_entity = _entity(hass, "number", f"{entry.entry_id}_new_chore_points")
     frequency_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_frequency")
     assigned_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_assigned_to")
+    schedule_entity = _entity(hass, "text", f"{entry.entry_id}_new_chore_schedule")
 
     name = ((name_entity.native_value if name_entity else "") or "").strip()
     if not name:
@@ -200,14 +206,32 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
 
     points = int(points_entity.native_value) if points_entity and points_entity.native_value is not None else 5
 
+    # A bad schedule string falls back to "every day" (None) rather than blocking the whole
+    # Add Chore submit - this popup has no error-surfacing path today (a blank name is
+    # already a silent no-op above, same permissive convention).
+    try:
+        schedule_days = parse_schedule_days_text(
+            schedule_entity.native_value if schedule_entity else None
+        )
+    except ValueError:
+        schedule_days = None
+
     await async_add_chore(
-        hass, entry, name=name, points=points, frequency=frequency, assigned_to=assigned_to
+        hass,
+        entry,
+        name=name,
+        points=points,
+        frequency=frequency,
+        assigned_to=assigned_to,
+        schedule_days=schedule_days,
     )
 
     if name_entity:
         await name_entity.async_set_value("")
     if points_entity:
         await points_entity.async_set_native_value(5)
+    if schedule_entity:
+        await schedule_entity.async_set_value("")
 
 
 async def async_create_reward_from_scratch_fields(hass: HomeAssistant, entry: ConfigEntry) -> None:

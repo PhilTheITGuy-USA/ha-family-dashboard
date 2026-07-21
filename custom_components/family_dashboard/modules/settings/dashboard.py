@@ -31,9 +31,7 @@ from homeassistant.helpers import entity_registry as er
 
 from ...const import (
     COLOR_OPTIONS,
-    CONF_CHORES,
     CONF_FEATURES,
-    CONF_REWARDS,
     CONF_ROSTER,
     DOMAIN,
     FEATURES,
@@ -43,25 +41,6 @@ from ...const import (
 from ..chores.dashboard import async_change_pin_button, async_pin_change_popup_card
 from .sensor import AVATARS_SENSOR_ENTITY_ID
 from .text import BIRTHDATE_SCRATCH_UNIQUE_ID
-
-_NAV_BUTTON_STYLE = {
-    "card": [
-        {"border-radius": "26px"},
-        {"height": "52px"},
-        {"padding": "4px 14px 4px 6px"},
-        {"box-shadow": "none"},
-        {"background-color": "#5a6270"},
-    ],
-    "grid": [
-        {"grid-template-areas": "'i n'"},
-        {"grid-template-columns": "42px auto"},
-        {"align-items": "center"},
-        {"justify-items": "start"},
-    ],
-    "icon": [{"width": "30px"}, {"color": "white"}],
-    "name": [{"color": "white"}, {"font-weight": "600"}, {"font-size": "13px"}],
-}
-
 
 def _avatar_select_entity_id(member_id: str) -> str:
     return f"select.family_dashboard_{member_id}_avatar"
@@ -667,9 +646,9 @@ def _member_enabled_pill(enabled_entity_id: str) -> dict:
 def _delete_member_tile(name_entity_id: str, member_name: str) -> dict:
     """Permanently deletes a roster member (`family_dashboard.delete_member` - see
     `roster.py`'s `async_delete_member` docstring for why this is a real removal, not
-    `hidden_by`) - gated behind a native Lovelace `confirmation:` prompt, same mechanism as
-    `_delete_tile` for chores/rewards, but with a deliberately stronger warning since this
-    removes a whole person's data, not one item."""
+    `hidden_by`) - gated behind a native Lovelace `confirmation:` prompt, same mechanism
+    `modules/chores/dashboard.py`'s `_manage_delete_tile` uses for chores/rewards, but with a
+    deliberately stronger warning since this removes a whole person's data, not one item."""
     entity_id = name_entity_id or ""
     return {
         "type": "custom:button-card",
@@ -740,205 +719,6 @@ def _feature_and_mapping_stack(
     }
 
 
-def _nav_button(name: str, icon: str, hash_suffix: str) -> dict:
-    """Opens a Chores & Rewards popup (Add Chore/Add Reward) - same visual shape as
-    `async_change_pin_button` (modules/chores/dashboard.py), kept as a small local copy since
-    it's just markup, matching this file's own existing "small local copy over cross-module
-    import for pure markup" convention (see `_avatar_header`-style precedents elsewhere)."""
-    return {
-        "type": "custom:button-card",
-        "name": name,
-        "icon": icon,
-        "show_name": True,
-        "show_icon": True,
-        "tap_action": {"action": "navigate", "navigation_path": f"#{hash_suffix}"},
-        "styles": _NAV_BUTTON_STYLE,
-    }
-
-
-def _field_pill(label: str, entity_id: str | None) -> dict:
-    """A generic "<Label>: <value>" pill opening the entity's own native more-info dialog -
-    used for chore/reward fields (name/points-or-cost/frequency/assigned-to). Unlike Avatar/
-    Color, there's nothing image/swatch-like to preview, so HA's stock more-info dialog (a
-    text box, a number box/slider, or a dropdown) is enough on its own - no custom picker
-    popup needed. `entity_id` can be `None` before the platform has forwarded - see
-    `_feature_toggle_pill`'s docstring for why this degrades gracefully instead of crashing."""
-    entity_id = entity_id or ""
-    return {
-        "type": "custom:button-card",
-        "entity": entity_id,
-        "show_name": True,
-        "show_icon": False,
-        "name": (
-            "[[[ var s = states['" + entity_id + "']; "
-            "return '" + label + ": ' + (s ? s.state : ''); ]]]"
-        ),
-        "tap_action": {"action": "more-info"},
-        "styles": _PLAIN_PILL_STYLE,
-    }
-
-
-def _delete_tile(entity_id: str | None, item_name: str) -> dict:
-    """Genuinely deletes a chore/reward (`family_dashboard.delete_task` - see `crud.py`'s
-    module docstring for why this is a real removal, not `hidden_by`) - gated behind a native
-    Lovelace `confirmation:` prompt (stock tap_action feature, no custom popup needed) since
-    there's no undo."""
-    entity_id = entity_id or ""
-    return {
-        "type": "custom:button-card",
-        "name": "Delete",
-        "icon": "mdi:trash-can",
-        "show_name": True,
-        "show_icon": True,
-        "tap_action": {
-            "action": "perform-action",
-            "perform_action": "family_dashboard.delete_task",
-            "target": {"entity_id": entity_id},
-            "confirmation": {"text": f"Delete '{item_name}'? This cannot be undone."},
-        },
-        "styles": {
-            "card": [
-                {"border-radius": "16px"},
-                {"height": "44px"},
-                {"padding": "4px 12px 4px 6px"},
-                {"box-shadow": "none"},
-                {"background-color": "#d9534f"},
-            ],
-            "grid": [
-                {"grid-template-areas": "'i n'"},
-                {"grid-template-columns": "30px auto"},
-                {"align-items": "center"},
-                {"justify-items": "start"},
-            ],
-            "icon": [{"width": "18px"}, {"color": "white"}],
-            "name": [
-                {"color": "white"},
-                {"font-size": "13px"},
-                {"font-weight": "600"},
-                {"padding-left": "4px"},
-            ],
-        },
-    }
-
-
-def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
-    chore_id = chore["chore_id"]
-    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{chore_id}_name")
-    points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{chore_id}_points")
-    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_frequency")
-    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_assigned_to")
-    sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore")
-    return {
-        "type": "horizontal-stack",
-        "cards": [
-            _field_pill("Name", name_id),
-            _field_pill("Points", points_id),
-            _field_pill("Frequency", frequency_id),
-            _field_pill("Assigned To", assigned_id),
-            _delete_tile(sensor_id, chore["name"]),
-        ],
-    }
-
-
-def _reward_row(ent_reg, entry: ConfigEntry, reward: dict) -> dict:
-    reward_id = reward["reward_id"]
-    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{reward_id}_name")
-    cost_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{reward_id}_cost")
-    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{reward_id}_assigned_to")
-    sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{reward_id}_reward")
-    return {
-        "type": "horizontal-stack",
-        "cards": [
-            _field_pill("Name", name_id),
-            _field_pill("Cost", cost_id),
-            _field_pill("Assigned To", assigned_id),
-            _delete_tile(sensor_id, reward["name"]),
-        ],
-    }
-
-
-def _add_item_popup(
-    *, hash_suffix: str, title: str, icon: str, entities: list[dict], service: str
-) -> dict:
-    return {
-        "type": "custom:bubble-card",
-        "card_type": "pop-up",
-        "hash": f"#{hash_suffix}",
-        "name": title,
-        "icon": icon,
-        "cards": [
-            {"type": "entities", "entities": entities, "show_header_toggle": False},
-            {
-                "type": "button",
-                "name": title,
-                "icon": icon,
-                "tap_action": {
-                    "action": "perform-action",
-                    "perform_action": service,
-                    "target": {"entity_id": entities[0]["entity"]},
-                },
-            },
-        ],
-    }
-
-
-def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
-    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_name") or ""
-    points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_chore_points") or ""
-    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_frequency") or ""
-    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_assigned_to") or ""
-    return _add_item_popup(
-        hash_suffix="addchore",
-        title="Add Chore",
-        icon="mdi:broom",
-        entities=[
-            {"entity": name_id, "name": "Name"},
-            {"entity": points_id, "name": "Points"},
-            {"entity": frequency_id, "name": "Frequency"},
-            {"entity": assigned_id, "name": "Assigned To"},
-        ],
-        service="family_dashboard.add_chore",
-    )
-
-
-def _add_reward_popup(ent_reg, entry: ConfigEntry) -> dict:
-    name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_reward_name") or ""
-    cost_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_reward_cost") or ""
-    assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_reward_assigned_to") or ""
-    return _add_item_popup(
-        hash_suffix="addreward",
-        title="Add Reward",
-        icon="mdi:gift",
-        entities=[
-            {"entity": name_id, "name": "Name"},
-            {"entity": cost_id, "name": "Cost"},
-            {"entity": assigned_id, "name": "Assigned To"},
-        ],
-        service="family_dashboard.add_reward",
-    )
-
-
-def _chores_rewards_section(ent_reg, entry: ConfigEntry) -> list[dict]:
-    """The Chores & Rewards management section - Add Chore/Add Reward buttons, one row per
-    existing chore/reward with live-editable fields + a confirmed Delete, and the two Add
-    popups. Kiosk/parent-only - see `async_settings_view_cards`'s own gating, same as Features
-    & Mapping."""
-    cards: list[dict] = [
-        {"type": "markdown", "content": "## Chores & Rewards"},
-        {"type": "horizontal-stack", "cards": [
-            _nav_button("Add Chore", "mdi:broom", "addchore"),
-            _nav_button("Add Reward", "mdi:gift", "addreward"),
-        ]},
-    ]
-    for chore in entry.data.get(CONF_CHORES, []):
-        cards.append(_chore_row(ent_reg, entry, chore))
-    for reward in entry.data.get(CONF_REWARDS, []):
-        cards.append(_reward_row(ent_reg, entry, reward))
-    cards.append(_add_chore_popup(ent_reg, entry))
-    cards.append(_add_reward_popup(ent_reg, entry))
-    return cards
-
-
 async def async_settings_view_cards(
     hass: HomeAssistant, entry: ConfigEntry, only_member: dict | None = None
 ) -> list[dict]:
@@ -963,9 +743,11 @@ async def async_settings_view_cards(
     `_feature_and_mapping_stack`) are Kiosk/parent-only - explicit user decision, unlike Name/
     Color/Avatar/Birthdate: they're only added when `only_member is None`, never for a linked
     member's own personal bucket, regardless of whose settings that bucket is otherwise
-    allowed to see. Chores & Rewards management (`_chores_rewards_section` - Add/Modify/
-    Delete) is gated the same way, on top of the existing "does anyone have chores enabled"
-    check the Parent PIN section already uses.
+    allowed to see. Chores & Rewards management (Add/edit/delete) does NOT live here - moved
+    to the Chores tab's PIN-gated Parent Review section on 2026-07-20 (live-reported: this
+    Settings location was Kiosk-only but had no PIN gate at all, so any kid could add/
+    reassign/repoint/delete chores and rewards freely) - see `modules/chores/dashboard.py`'s
+    `async_chores_rewards_management_card`.
     """
     ent_reg = er.async_get(hass)
     roster = entry.data[CONF_ROSTER]
@@ -1029,9 +811,6 @@ async def async_settings_view_cards(
             mapping_popups.append(_notify_map_popup(member_id, notify_map_id))
         cards.append({"type": "grid", "columns": 4, "square": False, "cards": feature_stacks})
         cards.extend(mapping_popups)
-
-    if only_member is None and any("chores" in member.get(CONF_FEATURES, []) for member in roster):
-        cards.extend(_chores_rewards_section(ent_reg, entry))
 
     if any("chores" in member.get(CONF_FEATURES, []) for member in roster):
         cards.append({"type": "markdown", "content": "## Parent PIN"})

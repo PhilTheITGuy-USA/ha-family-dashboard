@@ -85,16 +85,21 @@ _CARD_MOD_STYLE = (
     "max-height: clamp(420px,64vh,860px) !important; color: #2b2b2b !important; } "
     ".navigation, .navigation * { color: #2b2b2b !important; font-weight: 600 !important; } "
     ".day.header .date .text { font-weight: 600 !important; color: #2b2b2b !important; } "
-    ".day .date .text { font-size: 0.8em !important; font-weight: bold !important; "
+    # weekday label/event/time em-multipliers bumped 2026-07-20 (kiosk legibility pass, 1920x
+    # 1080 15" panel target) - all three were BELOW week-planner-card's own base font-size
+    # (0.8/0.9/0.78em), so the day NUMBER (already a prominent 1.6em) dwarfed its own
+    # supporting text. Kept as em multipliers (not px) deliberately - relative to
+    # week-planner-card's own base size, not a value this integration controls directly.
+    ".day .date .text { font-size: 1em !important; font-weight: bold !important; "
     "color: #2b2b2b !important; } "
     ".day .date .number { font-weight: bold !important; font-size: 1.6em !important; "
     "color: #2b2b2b !important; } "
     ".today .number { border-radius: 6px !important; background-color: #ff9800 !important; "
     "color: white !important; padding: 0 5px !important; } "
     ".event { color: #222 !important; background-color: var(--border-color) !important; "
-    "border-radius: 8px !important; font-size: 0.9em !important; padding: 2px 5px !important; } "
+    "border-radius: 8px !important; font-size: 1.05em !important; padding: 2px 5px !important; } "
     ".event.past { opacity: .35 !important; } "
-    ".time { color: #444 !important; font-size: 0.78em !important; } "
+    ".time { color: #444 !important; font-size: 0.95em !important; } "
     ".none { background-color: transparent !important; color: #9aa0a6 !important; "
     "box-shadow: none !important; border: none !important; }"
 )
@@ -397,7 +402,10 @@ def _nav_style_button(name: str, icon: str, tap_action: dict) -> dict:
             "icon": [{"width": "30px"}, {"color": "white"}],
             "name": [
                 {"color": "white"},
-                {"font-size": "13px"},
+                # 13px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
+                # `_pill_styles` for why every "52px pill, tiny name text" spot got the same
+                # bump for a 1920x1080 15" kiosk panel.
+                {"font-size": "16px"},
                 {"font-weight": "600"},
                 {"padding-left": "4px"},
                 {"white-space": "nowrap"},
@@ -437,7 +445,10 @@ def async_view_selector_pill() -> dict:
             "icon": [{"width": "30px"}, {"color": "white"}],
             "name": [
                 {"color": "white"},
-                {"font-size": "13px"},
+                # 13px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
+                # `_pill_styles` for why every "52px pill, tiny name text" spot got the same
+                # bump for a 1920x1080 15" kiosk panel.
+                {"font-size": "16px"},
                 {"font-weight": "600"},
                 {"padding-left": "4px"},
                 {"white-space": "nowrap"},
@@ -484,7 +495,9 @@ def _toggle_pill_base_styles(shown_entity_id: str) -> dict:
                     "? 'white' : '#555' ]]]"
                 )
             },
-            {"font-size": "14px"},
+            # 14px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
+            # `_pill_styles` for why.
+            {"font-size": "16px"},
             {"font-weight": "600"},
             {"padding-left": "4px"},
             {"justify-self": "start"},
