@@ -37,6 +37,8 @@ Family Dashboard is a custom Home Assistant integration that replaces the older 
 
 > ⚠️ **Holiday calendars:** The integration auto-provisions US and Philippines holiday calendars on first setup via HA's built-in Holiday integration. If you are in a different region, add your country's holiday calendar manually after setup and map it via Reconfigure.
 
+> ⚠️ **Shared Family calendar:** If you want a household-shared calendar (e.g. a Google Calendar everyone can see) to show up automatically on Kiosk and personal views, its HA entity's name must be exactly **"Family"** (case-insensitive) — this is how the integration finds it, not a per-member mapping. Some calendar integrations don't name the entity after the calendar's own title (e.g. it may default to the connected account's name instead). Check **Settings → Devices & Services → Entities**, find the calendar, and if its name isn't "Family", open it and set the **Name** field to "Family" — the entity ID itself doesn't need to change. Detection is live, so a config-entry **Reload** (not a full HA restart) is all that's needed to pick it up if you rename it after the wizard has already run.
+
 ---
 
 ## Installation
@@ -70,7 +72,7 @@ The wizard runs once at installation and covers ten screens in sequence. Every f
 | 4 | **Birthdates** | Enter each member's birthdate. The integration computes a Birthdays calendar from this — no external Birthdays integration needed. |
 | 5 | **Features** | Toggle Calendar, Lists, and Chores & Rewards on or off per member. Members with a feature disabled never get those entities. |
 | 6 | **Link HA users** | Map each family member to their HA user account. This drives whose data appears when that person logs into the dashboard. The Kiosk user sees everyone. |
-| 7 | **Calendar** | Map each member to their personal calendar entity (e.g. `calendar.phil`). The shared Family calendar and Birthdays are added automatically. |
+| 7 | **Calendar** | Map each member to their personal calendar entity (e.g. `calendar.phil`). The shared Family calendar and Birthdays are added automatically — but only if a `calendar.*` entity named exactly "Family" exists (see the prerequisites note above). |
 | 8 | **Lists** | Choose which list types each member gets: To-Do, Shopping, Packing, Gift Ideas, Custom (or all five). |
 | 9 | **Chores & Rewards** | Set point values for chore completion and configure the Parent Review PIN. The Unassigned bucket for shared household chores is created automatically. |
 | 10 | **Confirm** | Review the summary and click **Submit**. All entities are created live — the dashboard appears in your sidebar immediately. |
@@ -222,6 +224,7 @@ Family Dashboard is feature-complete against the v1 plan and live-validated end-
 - **ha-family-hub import:** Import from the old package is stubbed but not yet implemented. Manual cleanup of old helpers is required (see [Migrating from ha-family-hub](#migrating-from-ha-family-hub) above).
 - **Meals module:** Intentionally deferred — the feature registry is shaped for it but no UI or entities are created yet.
 - **Holiday regions:** Non-US / non-Philippines regions require manually adding a holiday calendar in HA and mapping it via Reconfigure.
+- **Shared Family calendar not appearing:** Detection requires a `calendar.*` entity named exactly "Family" — if your provider names the entity something else (e.g. after the connected account rather than the calendar's own title), rename it in **Settings → Devices & Services → Entities**, then Reload the Family Dashboard integration. A blank "Name" field on that entity means it's using the provider's default name, not that naming doesn't matter — check the actual `friendly_name` in Developer Tools → States if unsure.
 
 Report issues at: [github.com/PhilTheITGuy-USA/ha-family-dashboard/issues](https://github.com/PhilTheITGuy-USA/ha-family-dashboard/issues)
 
