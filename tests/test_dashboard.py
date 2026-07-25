@@ -388,10 +388,13 @@ async def test_kiosk_calendar_has_toggle_filter_switches_for_every_mapped_member
         "switch.family_dashboard_grace_shown",
         "select.family_dashboard_ada_color",
         "select.family_dashboard_grace_color",
-        "select.family_dashboard_calendar_view",
     ]
     week_planner = template_card["card"]
     assert week_planner["type"] == "custom:week-planner-card"
+    # Fixed to week-planner-card's own full-month mode - no view-switcher control (removed
+    # 2026-07-25), no leading/trailing days from adjacent months.
+    assert week_planner["days"] == "month"
+    assert week_planner["startingDay"] == "month"
     calendars = week_planner["calendars"]
     # Event color is also live-templated to the member's roster color, not a static hex
     # baked in at generation time - see async_kiosk_calendar_card's own inline comment.
@@ -431,21 +434,20 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
     config = await async_build_dashboard_config(hass, entry)
     ada_calendar_cards = _view_cards(_views_by_path(config)["calendar-ada"])
 
-    # Wrapped in config-template-card so the shared view-granularity selector
-    # (select.family_dashboard_calendar_view) can template days/startingDay here too, same as
-    # the Kiosk bucket's own card (a live-reported gap: a linked member's Calendar tab had no
-    # View: Month/Week/.../Today button at all) - plus the Family overlay's own toggle switch,
-    # unlike a per-member toggle (nothing else here to filter - only ever one or two calendars
-    # shown in a personal bucket).
+    # Wrapped in config-template-card so the Family overlay's own toggle switch can template
+    # its filter here too, same as the Kiosk bucket's own card - unlike a per-member toggle
+    # (nothing else here to filter - only ever one or two calendars shown in a personal
+    # bucket).
     template_card = next(
         c for c in ada_calendar_cards if c.get("type") == "custom:config-template-card"
     )
-    assert template_card["entities"] == [
-        "switch.family_dashboard_family_calendar_shown",
-        "select.family_dashboard_calendar_view",
-    ]
+    assert template_card["entities"] == ["switch.family_dashboard_family_calendar_shown"]
     week_planner = template_card["card"]
     assert week_planner["type"] == "custom:week-planner-card"
+    # Fixed to week-planner-card's own full-month mode - no view-switcher control (removed
+    # 2026-07-25), no leading/trailing days from adjacent months.
+    assert week_planner["days"] == "month"
+    assert week_planner["startingDay"] == "month"
     assert [c["entity"] for c in week_planner["calendars"]] == [
         "calendar.family_dashboard_ada_calendar",
         "calendar.family_shared",
@@ -454,10 +456,10 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
     assert "filter" not in ada_entry
     assert "filter" in family_entry  # Family is toggleable, unlike a personal calendar here
 
-    # The view-selector pill itself is present in Ada's own controls row too (nested inside
-    # the horizontal-stack, not a top-level card).
+    # No view-selector pill in Ada's own controls row anymore - only Add Event + the
+    # Family/Birthdays/Holidays toggle pills.
     controls_row = next(c for c in ada_calendar_cards if c.get("type") == "horizontal-stack")
-    assert any(
+    assert not any(
         c.get("tap_action", {}).get("perform_action") == "select.select_next"
         for c in controls_row["cards"]
     )
@@ -520,11 +522,11 @@ async def test_holidays_overlay_shows_every_country_toggleable_on_both_bucket_ki
 
 
 async def test_calendar_controls_omitted_when_nobody_has_calendar_enabled(hass):
-    """The view-selector/Add Event/Birthdays-Holidays controls reference entities from
-    Calendar's conditionally-forwarded platforms (select/switch/etc.) - those platforms
-    never get forwarded at all if no roster member has "calendar" enabled, so the controls
-    must not reference them either. Live-verified regression: an earlier version rendered
-    these controls unconditionally and crashed with a real browser
+    """The Add Event/Birthdays-Holidays controls reference entities from Calendar's
+    conditionally-forwarded platforms (select/switch/etc.) - those platforms never get
+    forwarded at all if no roster member has "calendar" enabled, so the controls must not
+    reference them either. Live-verified regression: an earlier version rendered these
+    controls unconditionally and crashed with a real browser
     `ButtonCardJSTemplateError: Cannot read properties of undefined (reading 'state')` on
     exactly this roster shape.
     """
@@ -548,10 +550,7 @@ async def test_calendar_controls_omitted_when_nobody_has_calendar_enabled(hass):
     for path in ("calendar-kiosk", "calendar-ada"):
         cards = _view_cards(views[path])
         assert not any(c.get("type") == "custom:config-template-card" for c in cards)
-        assert not any(
-            "family_dashboard_calendar_view" in str(c) or "family_dashboard.add_event" in str(c)
-            for c in cards
-        )
+        assert not any("family_dashboard.add_event" in str(c) for c in cards)
         assert any(
             c.get("type") == "markdown" and "No calendars are mapped" in c.get("content", "")
             for c in cards

@@ -138,13 +138,6 @@ LIST_PRESETS: dict[str, dict] = {
 CONF_CALENDAR_ENTITY_ID = "calendar_entity_id"
 CONF_NOTIFY_ENTITY_ID = "notify_entity_id"
 
-# Calendar view-granularity selector (2026-07-13 feature audit, ported from legacy
-# input_select.calendar_view) - household-scoped, cycled via a nav pill calling
-# select.select_next, mapped to week-planner-card's days/startingDay by
-# modules/calendar/dashboard.py.
-CALENDAR_VIEW_OPTIONS = ["Today", "Tomorrow", "Week", "Biweek", "Month"]
-CALENDAR_VIEW_DEFAULT = "Week"
-
 # Add Event popup's reminder lead-time checkboxes (2026-07-13 feature audit - "Week/Day/Hour"
 # per Phillip's own wording, matching modules/calendar/reminders.py's multi-tag-capable regex
 # rather than the legacy's single combined-minutes number). Each checked option appends its

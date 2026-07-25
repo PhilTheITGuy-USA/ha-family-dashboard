@@ -28,11 +28,11 @@ Per-tab content by bucket (see the rebuild plan's "Decided" section for the full
 - Calendar: Kiosk overlays every calendar-mapped member with interactive toggle-filter pills
   (`modules/calendar/dashboard.py`'s `async_kiosk_calendar_card`); a linked member's bucket
   shows just their own calendar plus the shared Family calendar (if any), fixed - no
-  per-member toggle pills to show/hide. Both bucket kinds DO share the same view-granularity
-  selector (Today/Tomorrow/Week/Biweek/Month, `async_view_selector_pill()`) AND the same
-  Birthdays/Holidays toggle pills (`async_birthdays_holidays_toggle_pills`) though - these are
-  all config-entry-scoped entities, not per-viewer, so changing any of them in either bucket
-  moves the other too.
+  per-member toggle pills to show/hide. Both bucket kinds' grids are fixed to a full-month
+  view (no view-switcher control - removed 2026-07-25, see `modules/calendar/dashboard.py`'s
+  docstring) and DO share the same Birthdays/Holidays toggle pills
+  (`async_birthdays_holidays_toggle_pills`) - config-entry-scoped entities, not per-viewer, so
+  toggling one in either bucket moves the other too.
 - Lists: Kiosk shows every member's lists under a per-member header; a linked member's bucket
   shows just their own, no header.
 - Chores: Kiosk shows every kid's chores/rewards with the same kind of toggle-filter pills,
@@ -69,7 +69,6 @@ from ..modules.calendar.dashboard import (
     async_calendar_view_card,
     async_kiosk_calendar_card,
     async_member_toggle_pills,
-    async_view_selector_pill,
 )
 from ..modules.chores.dashboard import async_chores_cards_for_member, async_kiosk_chores_cards
 from ..modules.lists.dashboard import async_lists_cards_for_member
@@ -345,12 +344,11 @@ def _any_calendar_enabled(roster: list[dict]) -> bool:
 async def _kiosk_calendar_cards(
     hass: HomeAssistant, entry: ConfigEntry, roster: list[dict]
 ) -> tuple[list[dict], list[dict]]:
-    """Returns `(controls_row_pills, content_cards)` - the toggle pills/Add Event/view
-    selector go into their OWN row below the fixed Home/Lists/Chores/Settings hub row (see
+    """Returns `(controls_row_pills, content_cards)` - the toggle pills/Add Event controls go
+    into their OWN row below the fixed Home/Lists/Chores/Settings hub row (see
     `_nav_row`/`_calendar_controls_row`), decoupled so the hub row's width never depends on
-    roster size. Pill order (member toggles, then Birthdays/Holidays, then Add Event, then the
-    view selector) matches `Family Dashboard - Main.jpg`'s own left-to-right order for these
-    controls.
+    roster size. Pill order (member toggles, then Birthdays/Holidays, then Add Event) matches
+    `Family Dashboard - Main.jpg`'s own left-to-right order for these controls.
     """
     if not _any_calendar_enabled(roster):
         return [], [_NO_CALENDARS_CARD]
@@ -359,7 +357,6 @@ async def _kiosk_calendar_cards(
         *async_member_toggle_pills(roster),
         *async_birthdays_holidays_toggle_pills(hass),
         async_add_event_button(),
-        async_view_selector_pill(),
     ]
     card = async_kiosk_calendar_card(hass, roster)
     grid = [card] if card else [_NO_CALENDARS_CARD]
@@ -377,17 +374,13 @@ async def _personal_calendar_cards(
     # one flagged roster member's own mapping had to be passed through explicitly.
     card = await async_calendar_view_card(hass, entry, [member])
     grid = [card] if card else [_NO_CALENDARS_CARD]
-    # Add Event + the view selector (Today/Tomorrow/Week/Biweek/Month) - a live-reported gap,
-    # this row previously only had Add Event, leaving a personal bucket's calendar permanently
-    # stuck at the card's own fixed default with no way to change how far out it renders. Plus
-    # Birthdays/Holidays toggle pills (another live-reported requirement - "always visible...
-    # though their view should be a toggle like any Roster user"), same shared switches the
-    # Kiosk bucket's own controls row uses.
+    # Add Event + Birthdays/Holidays toggle pills (a live-reported requirement - "always
+    # visible... though their view should be a toggle like any Roster user"), same shared
+    # switches the Kiosk bucket's own controls row uses.
     controls_row = {
         "type": "horizontal-stack",
         "cards": [
             async_add_event_button(),
-            async_view_selector_pill(),
             *async_birthdays_holidays_toggle_pills(hass),
         ],
     }

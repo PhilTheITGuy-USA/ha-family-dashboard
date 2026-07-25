@@ -103,17 +103,6 @@ async def test_avatar_select_options_come_from_seeded_folder(hass: HomeAssistant
     assert avatar_state.state in options
 
 
-async def test_calendar_view_selector_cycles(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    await _setup_entry(hass, roster)
-
-    entity_id = "select.family_dashboard_calendar_view"
-    assert hass.states.get(entity_id).state == "Week"
-
-    await hass.services.async_call("select", "select_next", {"entity_id": entity_id}, blocking=True)
-    assert hass.states.get(entity_id).state == "Biweek"
-
-
 async def test_event_calendar_select_options_include_family(hass: HomeAssistant):
     # "Family" is auto-detected by calendar NAME, not member-flagged - a calendar.* entity
     # whose own name is literally "Family" is enough, independent of any roster member's own

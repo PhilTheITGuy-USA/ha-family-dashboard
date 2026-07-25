@@ -31,12 +31,18 @@ the 2026-07-18 Family calendar redesign):
   on BOTH bucket kinds too (`switch.family_dashboard_family_calendar_shown`/
   `..._birthdays_shown`/`..._holidays_shown`, same mechanism as member toggles; one combined
   Holidays toggle covers every detected country, not one per country; Family defaults on).
-- The view-granularity selector (`select.family_dashboard_calendar_view`) - a nav pill that
-  cycles it via `select.select_next`, and its value is templated into BOTH the Kiosk card's
-  and a personal bucket's own card's `days`/`startingDay` fields (exact `Today/Tomorrow/Week/
-  Biweek/Month` -> day-count/anchor mapping ported from the legacy dashboard's own JS). It's a
-  single config-entry-scoped entity, not per-viewer - a linked member changing it moves the
-  Kiosk bucket's own view too, and vice versa.
+- Both bucket kinds' cards are fixed to a full-month view (`days`/`startingDay` both the
+  literal string `"month"`, week-planner-card's own built-in month mode - live-verified
+  against its source: `days: "month"` sets `_numberOfDaysIsMonth`, which makes `_getStartDate`
+  anchor on the 1st of the month and `_updateEvents` size the grid to
+  `startDate.daysInMonth`, with NO leading/trailing days spilled in from the adjacent month,
+  unlike `startingDay` set to a weekday name, which pads the grid to align on that weekday and
+  marks the spillover days `isOutsideMonth`). `showNavigation: true`'s built-in prev/next
+  arrows still work for browsing other months - with `_numberOfDaysIsMonth` true they advance
+  by whole months (`_getStartDate`'s `t.plus({months: this._navigationOffset})`), not by a
+  fixed day count. 2026-07-25: replaced the old Today/Tomorrow/Week/Biweek/Month cycle-pill
+  and its backing `select.family_dashboard_calendar_view` entity entirely - a live request to
+  drop the view switcher in favor of an always-current-month grid.
 - The Add Event popup (`async_add_event_popup_card`/`async_add_event_button`) - a
   `custom:bubble-card` pop-up with the scratch fields from `text.py`/`switch.py`/
   `datetime.py`/`date.py`, submitting via the `family_dashboard.add_event` service
@@ -122,7 +128,6 @@ BIRTHDAYS_ENTITY_ID = "calendar.family_dashboard_birthdays"
 # country shows up too, with no code change needed.
 _HOLIDAY_INTEGRATION_DOMAIN = "holiday"
 
-_VIEW_SELECT_ENTITY_ID = "select.family_dashboard_calendar_view"
 _BIRTHDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_birthdays_shown"
 _HOLIDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_holidays_shown"
 _FAMILY_CALENDAR_SHOWN_ENTITY_ID = "switch.family_dashboard_family_calendar_shown"
@@ -134,32 +139,6 @@ _FAMILY_CALENDAR_SHOWN_ENTITY_ID = "switch.family_dashboard_family_calendar_show
 # CONF_FAMILY_CALENDAR_MEMBER_ID member-flagging design, which forced giving up a member's
 # own personal calendar slot to host it).
 _FAMILY_CALENDAR_NAME = "family"
-
-# Ported verbatim from the legacy dashboard's own view-selector JS (see
-# family-hub.yaml's STARTDAY/DAYS variables) - Today/Tomorrow get week-planner-card's special
-# 'today'/'tomorrow' anchor keywords instead of a weekday name, everything else anchors on
-# Sunday with a day-count matching the label.
-
-# NOTE on brace-counting: config-template-card wants SINGLE braces (`${ ... }`), unlike
-# Jinja's double braces - an earlier version of these two constants accidentally emitted an
-# extra trailing `}` (mixing an f-string first line with plain-string continuation lines,
-# losing track of how many literal `}` each contributed), producing invalid JS that broke
-# EVERY card on the Calendar tab silently. Live-verified via a real browser console
-# `pageerror: Unexpected token '}'`, not assumed - config-template-card's parser doesn't
-# fail gracefully on a stray brace, it just closes the whole custom element with no visible
-# card at all, which is why this needed an actual console check to catch, not just a
-# config-shape read.
-_DAYS_JS = (
-    f"${{ (function(){{ var v = states['{_VIEW_SELECT_ENTITY_ID}']?.state; "
-    "if (v === 'Today') return 1; if (v === 'Tomorrow') return 2; if (v === 'Week') return 7; "
-    "if (v === 'Biweek') return 14; return 35; })() }"
-)
-_STARTING_DAY_JS = (
-    f"${{ (function(){{ var v = states['{_VIEW_SELECT_ENTITY_ID}']?.state; "
-    "if (v === 'Today') return 'today'; if (v === 'Tomorrow') return 'tomorrow'; "
-    "return 'sunday'; })() }"
-)
-
 
 def _shown_switch_entity_id(member_id: str) -> str:
     return f"switch.family_dashboard_{member_id}_shown"
@@ -261,10 +240,10 @@ def _overlay_entries(hass: HomeAssistant, toggled: bool) -> list[dict]:
 def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict | None:
     """The Kiosk bucket's calendar card - every given member's calendar always listed, each
     one's visibility toggled by its own `switch.family_dashboard_<id>_shown` state, plus
-    Birthdays/Holidays (toggled the same way, if they exist). `days`/`startingDay` are
-    templated from the view-granularity selector. Returns None if none of the given members
-    have a mapped calendar AND neither overlay exists - the caller omits the card entirely
-    rather than showing an empty grid.
+    Birthdays/Holidays (toggled the same way, if they exist). `days`/`startingDay` are fixed to
+    week-planner-card's own `"month"` mode (see this module's docstring). Returns None if none
+    of the given members have a mapped calendar AND neither overlay exists - the caller omits
+    the card entirely rather than showing an empty grid.
     """
     calendar_members = [m for m in members if _member_has_calendar(m)]
     overlays = _overlay_entries(hass, toggled=True)
@@ -306,12 +285,12 @@ def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict 
 
     return {
         "type": "custom:config-template-card",
-        "entities": [*toggle_entities, _VIEW_SELECT_ENTITY_ID],
+        "entities": toggle_entities,
         "card": {
             "type": "custom:week-planner-card",
             "calendars": calendars,
-            "days": _DAYS_JS,
-            "startingDay": _STARTING_DAY_JS,
+            "days": "month",
+            "startingDay": "month",
             **_WEEK_PLANNER_STATIC_OPTIONS,
             "card_mod": {"style": _CARD_MOD_STYLE},
         },
@@ -333,15 +312,9 @@ async def async_calendar_view_card(
     calendars, which still have no per-member toggle in a personal bucket (nothing to filter,
     there's only ever one or two calendars shown here).
 
-    `days`/`startingDay` are templated from the SAME `select.family_dashboard_calendar_view`
-    entity the Kiosk bucket's card uses (see `_DAYS_JS`/`_STARTING_DAY_JS`) - it's a single,
-    config-entry-scoped selector (not per-viewer), so a personal-bucket viewer changing it
-    also moves the Kiosk bucket's own view, and vice versa. A live-reported gap: a linked
-    member's Calendar tab had a working calendar but no View: Month/Week/.../Today button at
-    all - `async_view_selector_pill()` (wired in by `dashboard/registry.py`'s
-    `_personal_calendar_cards`) is the button; this card needs the matching templated
-    `days`/`startingDay` (previously hardcoded to a fixed 14/sunday) for that button to
-    actually do anything once tapped there.
+    `days`/`startingDay` are fixed to week-planner-card's own `"month"` mode, same as the
+    Kiosk bucket's own card (see this module's docstring) - a single, config-entry-wide
+    setting, not per-viewer.
     """
     calendars = [
         {
@@ -365,12 +338,12 @@ async def async_calendar_view_card(
 
     return {
         "type": "custom:config-template-card",
-        "entities": [*toggle_entities, _VIEW_SELECT_ENTITY_ID],
+        "entities": toggle_entities,
         "card": {
             "type": "custom:week-planner-card",
             "calendars": calendars,
-            "days": _DAYS_JS,
-            "startingDay": _STARTING_DAY_JS,
+            "days": "month",
+            "startingDay": "month",
             **_WEEK_PLANNER_STATIC_OPTIONS,
             "card_mod": {"style": _CARD_MOD_STYLE},
         },
@@ -385,49 +358,6 @@ def _nav_style_button(name: str, icon: str, tap_action: dict) -> dict:
         "show_name": True,
         "show_icon": True,
         "tap_action": tap_action,
-        "styles": {
-            "card": [
-                {"border-radius": "26px"},
-                {"height": "52px"},
-                {"padding": "4px 14px 4px 6px"},
-                {"box-shadow": "none"},
-                {"background-color": "#5a6270"},
-            ],
-            "grid": [
-                {"grid-template-areas": "'i n'"},
-                {"grid-template-columns": "42px auto"},
-                {"align-items": "center"},
-                {"justify-items": "start"},
-            ],
-            "icon": [{"width": "30px"}, {"color": "white"}],
-            "name": [
-                {"color": "white"},
-                # 13px -> 16px (2026-07-20 kiosk legibility pass) - see registry.py's
-                # `_pill_styles` for why every "52px pill, tiny name text" spot got the same
-                # bump for a 1920x1080 15" kiosk panel.
-                {"font-size": "16px"},
-                {"font-weight": "600"},
-                {"padding-left": "4px"},
-                {"white-space": "nowrap"},
-            ],
-        },
-    }
-
-
-def async_view_selector_pill() -> dict:
-    """Cycles select.family_dashboard_calendar_view via select_next - exact tap-to-cycle
-    pattern as the legacy dashboard's own view-selector button."""
-    return {
-        "type": "custom:button-card",
-        "icon": "mdi:calendar-expand-horizontal",
-        "show_name": True,
-        "show_icon": True,
-        "name": f"[[[ return 'View: ' + states['{_VIEW_SELECT_ENTITY_ID}'].state ]]]",
-        "tap_action": {
-            "action": "perform-action",
-            "perform_action": "select.select_next",
-            "target": {"entity_id": _VIEW_SELECT_ENTITY_ID},
-        },
         "styles": {
             "card": [
                 {"border-radius": "26px"},
