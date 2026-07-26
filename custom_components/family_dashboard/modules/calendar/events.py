@@ -1,10 +1,26 @@
 """Add Event popup's submit logic - reads every scratch field (title/description, all-day
-flag, start/end date-or-datetime, target calendar, Week/Day/Hour reminder checkboxes), calls
-the target calendar's `create_event`, appends `[[reminder:...]]` tag(s) for whichever lead
-times were checked, then clears every scratch field - mirroring the legacy
-`add_calendar_event` script's own field/branching logic and post-submit reset (see
-`family_hub_calendar.yaml`), but built on this integration's own owned entities instead of
-`input_*` helpers.
+flag, Start/End Date+Hour+Minute+AM-PM, weeks/days/hours/minutes-before reminder fields,
+Recurring flag + Recurrence preset, target calendar), calls the target calendar entity's
+`async_create_event` DIRECTLY (see below for why, not via the `calendar.create_event`
+service), appends `[[reminder:...]]` tag(s) for whichever lead-time fields were non-zero,
+then clears every scratch field - mirroring the legacy `add_calendar_event` script's own
+field/branching logic and post-submit reset (see `family_hub_calendar.yaml`), but built on
+this integration's own owned entities instead of `input_*` helpers.
+
+Calls the target CalendarEntity's `async_create_event` directly instead of going through
+`hass.services.async_call("calendar", "create_event", ...)` - a live-verified requirement for
+Recurring support: `homeassistant.components.calendar`'s own `CREATE_EVENT_SCHEMA` (checked
+directly against the installed HA source) has NO `rrule` field at all, so the SERVICE call
+would reject one outright even though the underlying entities happily accept it - both
+`local_calendar.LocalCalendarEntity.async_create_event` and
+`google.calendar.GoogleCalendarEntity.async_create_event` (the two backends this project
+supports, per SETUP.md) read an `rrule` kwarg directly and hand it to their own ical/RRULE
+parser. Bypassing the service is safe here since it's the same trust boundary as this
+function's own direct scratch-entity manipulation elsewhere (the user never gets raw API
+access, only through this one integration-owned button) - we do replicate the service
+handler's own `CalendarEntityFeature.CREATE_EVENT` support check ourselves, so an
+incompatible calendar backend still fails with a friendly `HomeAssistantError` instead of a
+raw `NotImplementedError`.
 
 The `family_dashboard.add_event` service is registered on `FamilyDashboardEventCalendarSelect`
 (see `select.py`) since that entity already represents "which calendar" - this module holds
@@ -12,8 +28,10 @@ the actual cross-entity logic so that class stays a plain entity, not a grab-bag
 """
 from __future__ import annotations
 
+import homeassistant.components.calendar as calendar_component
 import homeassistant.components.date as date_component
-import homeassistant.components.datetime as datetime_component
+import homeassistant.components.number as number_component
+import homeassistant.components.select as select_component
 import homeassistant.components.switch as switch_component
 import homeassistant.components.text as text_component
 from homeassistant.config_entries import ConfigEntry
@@ -21,17 +39,43 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
-from ...const import (
-    CONF_CALENDAR_ENTITY_ID,
-    CONF_ROSTER,
-    DOMAIN,
-    REMINDER_LEAD_TIMES,
-)
+from ...const import CONF_CALENDAR_ENTITY_ID, CONF_ROSTER, DOMAIN
 from .dashboard import _family_calendar_entity
-from .date import EVENT_END_DATE_UNIQUE_ID, EVENT_START_DATE_UNIQUE_ID
-from .datetime import EVENT_END_UNIQUE_ID, EVENT_START_UNIQUE_ID
-from .switch import EVENT_ALL_DAY_UNIQUE_ID, reminder_switch_unique_id
+from .event_time import (
+    DEFAULT_END_HOUR,
+    DEFAULT_MINUTE,
+    DEFAULT_START_HOUR,
+    EVENT_END_AMPM_UNIQUE_ID,
+    EVENT_END_DATE_UNIQUE_ID,
+    EVENT_END_HOUR_UNIQUE_ID,
+    EVENT_END_MINUTE_UNIQUE_ID,
+    EVENT_RECURRENCE_UNIQUE_ID,
+    EVENT_RECURRING_UNIQUE_ID,
+    EVENT_START_AMPM_UNIQUE_ID,
+    EVENT_START_DATE_UNIQUE_ID,
+    EVENT_START_HOUR_UNIQUE_ID,
+    EVENT_START_MINUTE_UNIQUE_ID,
+    compose_datetime,
+)
+from .number import (
+    EVENT_REMIND_DAYS_UNIQUE_ID,
+    EVENT_REMIND_HOURS_UNIQUE_ID,
+    EVENT_REMIND_MINUTES_UNIQUE_ID,
+    EVENT_REMIND_WEEKS_UNIQUE_ID,
+)
+from .switch import EVENT_ALL_DAY_UNIQUE_ID
 from .text import EVENT_DESCRIPTION_UNIQUE_ID, EVENT_TITLE_UNIQUE_ID
+
+# Bare FREQ (no BYDAY/BYMONTHDAY) anchors to DTSTART's own weekday/day-of-month per RFC5545's
+# default recurrence-set expansion, so we don't need to compute those ourselves - live-verified
+# against both supported calendar backends' own rrule handling (see this module's docstring).
+_RECURRENCE_RRULES = {
+    "Daily": "FREQ=DAILY",
+    "Weekly": "FREQ=WEEKLY",
+    "Monthly": "FREQ=MONTHLY",
+    "Annually": "FREQ=YEARLY",
+    "Every Weekday": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+}
 
 
 def _entity(hass: HomeAssistant, domain: str, unique_id_suffix: str, entry: ConfigEntry):
@@ -43,8 +87,9 @@ def _entity(hass: HomeAssistant, domain: str, unique_id_suffix: str, entry: Conf
     component_map = {
         "text": text_component.DATA_COMPONENT,
         "switch": switch_component.DATA_COMPONENT,
-        "datetime": datetime_component.DATA_COMPONENT,
         "date": date_component.DATA_COMPONENT,
+        "number": number_component.DATA_COMPONENT,
+        "select": select_component.DATA_COMPONENT,
     }
     component = hass.data.get(component_map[domain])
     return component.get_entity(entity_id) if component else None
@@ -64,10 +109,21 @@ def _target_calendar_entity_id(hass: HomeAssistant, entry: ConfigEntry, calendar
     return f"calendar.family_dashboard_{member['member_id']}_calendar"
 
 
+def _resolve_calendar_entity(hass: HomeAssistant, entity_id: str) -> calendar_component.CalendarEntity:
+    component = hass.data.get(calendar_component.DATA_COMPONENT)
+    entity = component.get_entity(entity_id) if component else None
+    if entity is None:
+        raise HomeAssistantError(f"Calendar '{entity_id}' is not available")
+    if not entity.supported_features & calendar_component.CalendarEntityFeature.CREATE_EVENT:
+        raise HomeAssistantError(f"Calendar '{entity_id}' does not support creating events")
+    return entity
+
+
 async def async_create_event_from_scratch_fields(
     hass: HomeAssistant, entry: ConfigEntry, calendar_name: str
 ) -> None:
     target_entity_id = _target_calendar_entity_id(hass, entry, calendar_name)
+    calendar_entity = _resolve_calendar_entity(hass, target_entity_id)
 
     title_entity = _entity(hass, "text", EVENT_TITLE_UNIQUE_ID, entry)
     description_entity = _entity(hass, "text", EVENT_DESCRIPTION_UNIQUE_ID, entry)
@@ -77,35 +133,71 @@ async def async_create_event_from_scratch_fields(
     description = description_entity.native_value if description_entity else ""
     all_day = bool(all_day_entity and all_day_entity.is_on)
 
+    weeks_entity = _entity(hass, "number", EVENT_REMIND_WEEKS_UNIQUE_ID, entry)
+    days_entity = _entity(hass, "number", EVENT_REMIND_DAYS_UNIQUE_ID, entry)
+    hours_entity = _entity(hass, "number", EVENT_REMIND_HOURS_UNIQUE_ID, entry)
+    minutes_entity = _entity(hass, "number", EVENT_REMIND_MINUTES_UNIQUE_ID, entry)
+    weeks = int(weeks_entity.native_value or 0) if weeks_entity else 0
+    days = int(days_entity.native_value or 0) if days_entity else 0
+    hours = int(hours_entity.native_value or 0) if hours_entity else 0
+    minutes = int(minutes_entity.native_value or 0) if minutes_entity else 0
+
+    # Each non-zero field is its own independent [[reminder:...]] tag (see reminders.py's
+    # multi-tag support) - weeks/days translate to the tag format's "d" component (there's no
+    # "w"), hours+minutes combine into one tag since they're the same granularity tier.
     reminder_tags = ""
-    reminder_switches = []
-    for key, tag_value in REMINDER_LEAD_TIMES.items():
-        switch_entity = _entity(hass, "switch", reminder_switch_unique_id(key), entry)
-        reminder_switches.append(switch_entity)
-        if switch_entity and switch_entity.is_on:
-            reminder_tags += f" [[reminder:{tag_value}]]"
+    if weeks:
+        reminder_tags += f" [[reminder:{weeks * 7}d]]"
+    if days:
+        reminder_tags += f" [[reminder:{days}d]]"
+    if hours or minutes:
+        hours_part = f"{hours}h" if hours else ""
+        minutes_part = f"{minutes}m" if minutes else ""
+        reminder_tags += f" [[reminder:{hours_part}{minutes_part}]]"
 
     full_description = f"{description or ''}{reminder_tags}"
 
-    service_data: dict = {"summary": title or "", "description": full_description}
-    if all_day:
-        start_entity = _entity(hass, "date", EVENT_START_DATE_UNIQUE_ID, entry)
-        end_entity = _entity(hass, "date", EVENT_END_DATE_UNIQUE_ID, entry)
-        if start_entity is None or end_entity is None or not start_entity.native_value or not end_entity.native_value:
-            raise HomeAssistantError("Event start/end date is required")
-        service_data["start_date"] = start_entity.native_value
-        service_data["end_date"] = end_entity.native_value
-    else:
-        start_entity = _entity(hass, "datetime", EVENT_START_UNIQUE_ID, entry)
-        end_entity = _entity(hass, "datetime", EVENT_END_UNIQUE_ID, entry)
-        if start_entity is None or end_entity is None or not start_entity.native_value or not end_entity.native_value:
-            raise HomeAssistantError("Event start/end time is required")
-        service_data["start_date_time"] = start_entity.native_value
-        service_data["end_date_time"] = end_entity.native_value
+    recurring_entity = _entity(hass, "switch", EVENT_RECURRING_UNIQUE_ID, entry)
+    recurrence_entity = _entity(hass, "select", EVENT_RECURRENCE_UNIQUE_ID, entry)
+    rrule = None
+    if recurring_entity and recurring_entity.is_on and recurrence_entity:
+        rrule = _RECURRENCE_RRULES.get(recurrence_entity.current_option)
 
-    await hass.services.async_call(
-        "calendar", "create_event", service_data, target={"entity_id": target_entity_id}, blocking=True
-    )
+    create_kwargs: dict = {"summary": title or "", "description": full_description}
+    if rrule:
+        create_kwargs["rrule"] = rrule
+
+    start_date_entity = _entity(hass, "date", EVENT_START_DATE_UNIQUE_ID, entry)
+    end_date_entity = _entity(hass, "date", EVENT_END_DATE_UNIQUE_ID, entry)
+    start_hour_entity = _entity(hass, "number", EVENT_START_HOUR_UNIQUE_ID, entry)
+    start_minute_entity = _entity(hass, "number", EVENT_START_MINUTE_UNIQUE_ID, entry)
+    start_ampm_entity = _entity(hass, "select", EVENT_START_AMPM_UNIQUE_ID, entry)
+    end_hour_entity = _entity(hass, "number", EVENT_END_HOUR_UNIQUE_ID, entry)
+    end_minute_entity = _entity(hass, "number", EVENT_END_MINUTE_UNIQUE_ID, entry)
+    end_ampm_entity = _entity(hass, "select", EVENT_END_AMPM_UNIQUE_ID, entry)
+
+    if all_day:
+        if not start_date_entity or not end_date_entity or not start_date_entity.native_value or not end_date_entity.native_value:
+            raise HomeAssistantError("Event start/end date is required")
+        create_kwargs["dtstart"] = start_date_entity.native_value
+        create_kwargs["dtend"] = end_date_entity.native_value
+    else:
+        required = (
+            start_date_entity, start_hour_entity, start_minute_entity, start_ampm_entity,
+            end_date_entity, end_hour_entity, end_minute_entity, end_ampm_entity,
+        )
+        if any(e is None for e in required) or not start_date_entity.native_value or not end_date_entity.native_value:
+            raise HomeAssistantError("Event start/end time is required")
+        create_kwargs["dtstart"] = compose_datetime(
+            start_date_entity.native_value, start_hour_entity.native_value,
+            start_minute_entity.native_value, start_ampm_entity.current_option,
+        )
+        create_kwargs["dtend"] = compose_datetime(
+            end_date_entity.native_value, end_hour_entity.native_value,
+            end_minute_entity.native_value, end_ampm_entity.current_option,
+        )
+
+    await calendar_entity.async_create_event(**create_kwargs)
 
     if title_entity:
         await title_entity.async_set_value("")
@@ -113,6 +205,20 @@ async def async_create_event_from_scratch_fields(
         await description_entity.async_set_value("")
     if all_day_entity:
         await all_day_entity.async_turn_off()
-    for switch_entity in reminder_switches:
-        if switch_entity:
-            await switch_entity.async_turn_off()
+    for number_entity in (weeks_entity, days_entity, hours_entity, minutes_entity):
+        if number_entity:
+            await number_entity.async_set_native_value(0)
+    if recurring_entity:
+        await recurring_entity.async_turn_off()
+    if start_hour_entity:
+        await start_hour_entity.async_set_native_value(DEFAULT_START_HOUR)
+    if start_minute_entity:
+        await start_minute_entity.async_set_native_value(DEFAULT_MINUTE)
+    if start_ampm_entity:
+        await start_ampm_entity.async_select_option("AM")
+    if end_hour_entity:
+        await end_hour_entity.async_set_native_value(DEFAULT_END_HOUR)
+    if end_minute_entity:
+        await end_minute_entity.async_set_native_value(DEFAULT_MINUTE)
+    if end_ampm_entity:
+        await end_ampm_entity.async_select_option("AM")

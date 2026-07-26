@@ -84,13 +84,15 @@ DEFAULT_AVATAR_FILENAMES = ["person-solid.png", "people-group-solid.png"]
 # around as scope creeps.
 FEATURES: dict[str, dict] = {
     "calendar": {
-        # "select"/"text"/"switch"/"datetime"/"date" are all HOUSEHOLD-level scratch/display
-        # entities (view-granularity selector, Birthdays/Holidays toggles, Add Event popup
-        # fields) - forwarded once if ANY member has "calendar" enabled, same mechanism as
-        # per-member platforms, just not per-member entities within them. See
-        # modules/calendar/{select,text,switch,datetime,date}.py.
+        # "select"/"text"/"switch"/"date"/"number" are all HOUSEHOLD-level scratch/display
+        # entities (Birthdays/Holidays toggles, Add Event popup fields including its
+        # weeks/days/hours/minutes-before reminder fields and its Date+Hour+Minute+AM-PM
+        # Start/End fields - see event_time.py's docstring for why there's no "datetime"
+        # platform here anymore) - forwarded once if ANY member has "calendar" enabled, same
+        # mechanism as per-member platforms, just not per-member entities within them. See
+        # modules/calendar/{select,text,switch,date,number}.py.
         "name": "Calendar",
-        "platforms": ["calendar", "select", "text", "switch", "datetime", "date"],
+        "platforms": ["calendar", "select", "text", "switch", "date", "number"],
         "default_selected": True,
         "implemented": True,
     },
@@ -138,15 +140,6 @@ LIST_PRESETS: dict[str, dict] = {
 CONF_CALENDAR_ENTITY_ID = "calendar_entity_id"
 CONF_NOTIFY_ENTITY_ID = "notify_entity_id"
 
-# Add Event popup's reminder lead-time checkboxes (2026-07-13 feature audit - "Week/Day/Hour"
-# per Phillip's own wording, matching modules/calendar/reminders.py's multi-tag-capable regex
-# rather than the legacy's single combined-minutes number). Each checked option appends its
-# own independent [[reminder:...]] tag.
-REMINDER_LEAD_TIMES: dict[str, str] = {
-    "week": "7d",
-    "day": "1d",
-    "hour": "1h",
-}
 
 # Chores & Rewards - top-level entry.data lists (NOT per-roster-member fields, unlike
 # everything above): a member can have many chores/rewards, each pointing back at them via

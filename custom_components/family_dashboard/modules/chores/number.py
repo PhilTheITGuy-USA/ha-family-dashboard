@@ -8,9 +8,8 @@ fields, reset to their default after each submit - see `crud.py`) and `ChorePoin
 `RewardCostNumber` (one per EXISTING chore/reward, tap → native number more-info dialog,
 persists via `crud.async_update_chore_field`/`async_update_reward_field`).
 
-Re-exported by the top-level `number.py` shim - a plain 1:1 shim, NOT an aggregator, since
-only Chores needs this domain today (see `modules/__init__.py`'s docstring for the shim vs
-aggregator distinction).
+Re-exported (aggregated alongside `modules/calendar/number.py`) by the top-level `number.py`
+shim - see that file's docstring.
 """
 from __future__ import annotations
 
