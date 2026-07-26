@@ -27,26 +27,50 @@ the 2026-07-18 Family calendar redesign):
   `modules/calendar/birthdays.py`, since HA has no built-in "Birthdays" integration)/Holidays
   (any HA "Holiday" integration entries, auto-provisioned for US + Philippines by
   `holidays_setup.py` and detected generically via `_holiday_calendar_entities` - not one
-  hardcoded country) overlay layers - added to BOTH bucket kinds, toggle-filter pills for them
-  on BOTH bucket kinds too (`switch.family_dashboard_family_calendar_shown`/
-  `..._birthdays_shown`/`..._holidays_shown`, same mechanism as member toggles; one combined
-  Holidays toggle covers every detected country, not one per country; Family defaults on).
-- Both bucket kinds' cards are fixed to a full-month view (`days`/`startingDay` both the
-  literal string `"month"`, week-planner-card's own built-in month mode - live-verified
-  against its source: `days: "month"` sets `_numberOfDaysIsMonth`, which makes `_getStartDate`
-  anchor on the 1st of the month and `_updateEvents` size the grid to
-  `startDate.daysInMonth`, with NO leading/trailing days spilled in from the adjacent month,
-  unlike `startingDay` set to a weekday name, which pads the grid to align on that weekday and
-  marks the spillover days `isOutsideMonth`). `showNavigation: true`'s built-in prev/next
-  arrows still work for browsing other months - with `_numberOfDaysIsMonth` true they advance
-  by whole months (`_getStartDate`'s `t.plus({months: this._navigationOffset})`), not by a
-  fixed day count. 2026-07-25: replaced the old Today/Tomorrow/Week/Biweek/Month cycle-pill
-  and its backing `select.family_dashboard_calendar_view` entity entirely - a live request to
-  drop the view switcher in favor of an always-current-month grid.
+  hardcoded country) overlay layers - added to BOTH bucket kinds. Only Family has a
+  toggle-filter pill (`switch.family_dashboard_family_calendar_shown`,
+  `async_family_calendar_toggle_pill`); Birthdays/Holidays are ALWAYS shown with no button at
+  all (2026-07-25, a live request - see `_overlay_entries`'s docstring for why Birthdays
+  stayed the existing computed entity rather than becoming real events written into the
+  Family calendar, the safer of two options presented). One combined Holidays overlay covers
+  every detected country, not one per country; Family defaults on when toggleable.
+- Both bucket kinds' cards are fixed to a full-month view (`days: "month"` sets
+  week-planner-card's own `_numberOfDaysIsMonth`, sizing the grid to `startDate.daysInMonth`
+  regardless of the specific month). `showNavigation: true`'s built-in prev/next arrows still
+  work for browsing other months - with `_numberOfDaysIsMonth` true they advance by whole
+  months (`_getStartDate`'s `t.plus({months: this._navigationOffset})`), not by a fixed day
+  count. 2026-07-25: replaced the old Today/Tomorrow/Week/Biweek/Month cycle-pill and its
+  backing `select.family_dashboard_calendar_view` entity entirely - a live request to drop
+  the view switcher in favor of an always-current-month grid.
+- `startingDay: "sunday"` (2026-07-26, Skylight-calendar-inspired redesign, superseding an
+  earlier `startingDay: "month"` choice from the same day - see git history) - a live
+  reference photo showed Skylight uses a genuine fixed Sun-Sat weekday-header ROW
+  (`showWeekDayText: False` below), which only reads true if every column consistently holds
+  the same real weekday every week; `startingDay: "month"` doesn't guarantee that (day 1
+  lands in whatever column its own real weekday happens to be, e.g. every column reads
+  "Wednesday" for a month starting on one). `startingDay: "sunday"` instead pads the grid to
+  align day 1 to its real Sunday-starting week, live-verified via source to mark the
+  leading/trailing padding days `isOutsideMonth` - which week-planner-card already renders as
+  fully empty boxes (no number, no events - its own source's `_renderDays` special-cases
+  isOutsideMonth days to a bare empty div) with zero extra styling needed. This is a
+  deliberate, live-requested
+  DEPARTURE from Skylight's own actual behavior (which shows real, muted adjacent-month day
+  numbers in those padding cells, per the reference photo) - explicitly rejected in favor of
+  genuinely blank placeholder cells.
 - The Add Event popup (`async_add_event_popup_card`/`async_add_event_button`) - a
-  `custom:bubble-card` pop-up with the scratch fields from `text.py`/`switch.py`/
-  `datetime.py`/`date.py`, submitting via the `family_dashboard.add_event` service
-  (see `events.py`).
+  `custom:bubble-card` pop-up with the scratch fields from `text.py`/`switch.py`/`date.py`/
+  `number.py`/`select.py`, submitting via the `family_dashboard.add_event` service (see
+  `events.py`). Reminders are four independent weeks/days/hours/minutes-before `number` fields
+  (`number.py`, replacing 2026-07-25's fixed 1-week/1-day/1-hour checkboxes - a live request
+  for a configurable lead time instead of a static one). Start/End time-of-day is a Date +
+  Hour(1-12) + Minute + AM/PM group per side (2026-07-25, replacing a single combined
+  `datetime` field per side - see `event_time.py`'s docstring for why a shared kiosk can't
+  rely on HA's native datetime picker's per-viewer-account AM/PM setting), and Start's own 4
+  fields auto-default End's to itself plus one hour on every set (`event_time.py`'s
+  `async_recompute_end_from_start`). Recurring is a switch + conditional Recurrence-preset
+  select, same shape as All Day Event (`switch.py`/`select.py`) - see `events.py` for how a
+  preset becomes an RFC5545 `rrule` passed directly to the target calendar entity (bypassing
+  the `calendar.create_event` SERVICE, which has no recurrence support at all).
 
 card_mod styling adapted from the legacy file's proven week-planner-card block, with the
 'Ovo' theme font reference dropped from THIS specific block (the theme now provides it
@@ -87,19 +111,52 @@ def _member_has_calendar(member: dict) -> bool:
 
 _CARD_MOD_STYLE = (
     "ha-card { background: rgba(255,255,255,0.85) !important; border-radius: 24px "
-    "!important; box-shadow: none !important; height: clamp(420px,64vh,860px) !important; "
-    "max-height: clamp(420px,64vh,860px) !important; color: #2b2b2b !important; } "
+    "!important; box-shadow: none !important; "
+    # `height`/`max-height` (both the same fixed `clamp(...)`) used to hard-cap the card's
+    # own height - live-reported real bug: a full always-shown month grid (`days: "month"`,
+    # this module's docstring) needs 4-6 rows depending on the month/starting weekday, and a
+    # fixed cap tuned for less content clipped the LAST row's background off entirely - it
+    # rendered visibly outside the card, floating on the view's own page background instead
+    # (uneven-looking row spacing was a symptom of the same cause, not a separate bug). A
+    # `min-height` alone still gives short content the same tall kiosk-appropriate card this
+    # was meant to guarantee, but lets it grow to whatever the current month actually needs
+    # rather than clipping. `height: auto` overrides week-planner-card's own default height
+    # rule, which would otherwise still apply.
+    "min-height: clamp(420px,64vh,860px) !important; height: auto !important; "
+    "color: #2b2b2b !important; "
+    # Live-verified real gap (2026-07-25): week-planner-card's own internal CSS never
+    # references any HA theme variable for its text, so the "Family Dashboard" theme's 'Ovo'
+    # font was silently never actually rendering on the calendar grid AT ALL, on any install,
+    # ever - confirmed by checking computed styles in a real browser: --primary-font-family
+    # correctly resolved to 'Ovo', serif on the view once the (separate, also-fixed)
+    # dashboard/view theme-drop bug was fixed, yet the day-number's own computed font-family
+    # still showed the browser/HA default. Setting it explicitly here, once, on ha-card lets
+    # it cascade normally to every descendant (.day/.event/.time/etc rules below only set
+    # size/weight/color, not font-family, so they don't need their own copy of this).
+    "font-family: var(--primary-font-family, inherit) !important; } "
     ".navigation, .navigation * { color: #2b2b2b !important; font-weight: 600 !important; } "
-    ".day.header .date .text { font-weight: 600 !important; color: #2b2b2b !important; } "
-    # weekday label/event/time em-multipliers bumped 2026-07-20 (kiosk legibility pass, 1920x
-    # 1080 15" panel target) - all three were BELOW week-planner-card's own base font-size
-    # (0.8/0.9/0.78em), so the day NUMBER (already a prominent 1.6em) dwarfed its own
-    # supporting text. Kept as em multipliers (not px) deliberately - relative to
-    # week-planner-card's own base size, not a value this integration controls directly.
-    ".day .date .text { font-size: 1em !important; font-weight: bold !important; "
-    "color: #2b2b2b !important; } "
-    ".day .date .number { font-weight: bold !important; font-size: 1.6em !important; "
-    "color: #2b2b2b !important; } "
+    # 2026-07-26, Skylight-calendar-inspired redesign (live reference photo, user request -
+    # "days listed on top, numbers in the calendar, far more readable"): `showWeekDayText:
+    # False` (see _WEEK_PLANNER_STATIC_OPTIONS) switches week-planner-card from its default
+    # "Wednesday" inline-per-day-cell label into a genuine top header ROW of weekday names
+    # instead (`.day.header` cells - live-verified via source: the card already supports
+    # this, it just defaults the OTHER way and we'd simply never set the option before) -
+    # this ALSO means regular day cells stop rendering their own `.date .text` span
+    # entirely (the same CSS class the header row's OWN weekday-name text uses), so the two
+    # rules below are effectively "the header row" now, not "every day's own label".
+    ".day.header .date .text { display: block; font-size: 1.15em !important; "
+    "font-weight: 600 !important; letter-spacing: .02em !important; text-align: center "
+    "!important; color: #6b6b6b !important; } "
+    ".day.header { border-bottom: 2px solid rgba(0,0,0,0.08) !important; padding-bottom: "
+    "6px !important; margin-bottom: 4px !important; } "
+    # 2026-07-26: shrunk once to a muted 1.1em/600-weight/#767676 right after adding the
+    # Skylight-style header row above (this comment's own earlier revision), then explicitly
+    # reverted bigger/bolder/darker than even the original 1.6em on direct live feedback - the
+    # header row change didn't reduce how prominent the number itself should be, despite that
+    # having been this file's own working assumption. `.today .number`'s own highlight below
+    # is unaffected (its own color/background/padding still take precedence).
+    ".day .date .number { font-weight: 700 !important; font-size: 1.8em !important; "
+    "color: #1a1a1a !important; } "
     ".today .number { border-radius: 6px !important; background-color: #ff9800 !important; "
     "color: white !important; padding: 0 5px !important; } "
     ".event { color: #222 !important; background-color: var(--border-color) !important; "
@@ -116,6 +173,10 @@ _WEEK_PLANNER_STATIC_OPTIONS = {
     "combineSimilarEvents": True,
     "hidePastEvents": False,
     "compact": False,
+    # False (not the card's own default of True) is what actually turns on its top
+    # weekday-header-ROW layout instead of an inline label on every individual day cell -
+    # see _CARD_MOD_STYLE's own comment on the Skylight-inspired redesign this is part of.
+    "showWeekDayText": False,
 }
 
 # Our OWN computed entity (modules/calendar/birthdays.py) - not an external "Birthdays"
@@ -128,8 +189,6 @@ BIRTHDAYS_ENTITY_ID = "calendar.family_dashboard_birthdays"
 # country shows up too, with no code change needed.
 _HOLIDAY_INTEGRATION_DOMAIN = "holiday"
 
-_BIRTHDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_birthdays_shown"
-_HOLIDAYS_SHOWN_ENTITY_ID = "switch.family_dashboard_holidays_shown"
 _FAMILY_CALENDAR_SHOWN_ENTITY_ID = "switch.family_dashboard_family_calendar_shown"
 
 # Name family members use for their household's shared calendar (e.g. a Google Calendar
@@ -188,65 +247,61 @@ def _holiday_calendar_entities(hass: HomeAssistant) -> list[tuple[str, str]]:
     return pairs
 
 
-def _overlay_entries(hass: HomeAssistant, toggled: bool) -> list[dict]:
-    """Birthdays/Holidays calendar entries, only for ones that actually exist on this HA
-    instance - Birthdays is our own always-created entity (see `modules/calendar/
-    birthdays.py`), Holidays is however many Holiday integration entries currently exist, all
-    sharing ONE combined toggle switch (not one per country).
+def _overlay_entries(hass: HomeAssistant) -> list[dict]:
+    """Family/Birthdays/Holidays calendar entries, only for ones that actually exist on this
+    HA instance - Birthdays is our own always-created entity (see `modules/calendar/
+    birthdays.py`), Holidays is however many Holiday integration entries currently exist.
+
+    2026-07-25: Birthdays and Holidays are now ALWAYS shown, no toggle pill, no `filter` key
+    at all (a live request - "always display Holidays/Birthdays as we currently do, but
+    remove the button completely"; Birthdays stays the existing computed entity, not events
+    written into the Family calendar - the safer of two options presented, since writing real
+    events into an external calendar would need its own create/update/delete sync logic
+    against that calendar whenever a birthdate changes or a member is removed). Family
+    calendar's own toggle is UNCHANGED - only Birthdays/Holidays lost their buttons.
 
     IMPORTANT - `filter` is an EXCLUSION regex, not an inclusion one: live-verified directly
     against the installed `week-planner-card.js` source (`_isFilterEvent`/its one call site in
     `_updateEvents`), an event whose summary MATCHES `calendars[i].filter` is SKIPPED (hidden),
-    not shown. So "shown" (switch on) must use `'^$'` (matches nothing real -> nothing
-    excluded -> everything shown), and "hidden" (switch off) must use `'.*'` (matches
-    everything -> everything excluded) - the OPPOSITE of the naive "`.*`=show-all,
-    `^$`=hide-all" reading an earlier version of this code (and every other toggle-filtered
-    calendar in this module) assumed. A live user report ("Birthdays only shows when the pill
-    is gray/off") caught this - pytest alone couldn't, since it only ever asserted the
-    generated STRING content, never how the third-party card actually interprets it."""
+    not shown. So a toggleable "shown" (switch on) must use `'^$'` (matches nothing real ->
+    nothing excluded -> everything shown) - omitting `filter` entirely (as Birthdays/Holidays
+    now do) has the same "nothing excluded" effect, permanently. A live user report
+    ("Birthdays only shows when the pill is gray/off") caught the inverted-regex version of
+    this bug originally - pytest alone couldn't, since it only ever asserted the generated
+    STRING content, never how the third-party card actually interprets it."""
     entries = []
     family_calendar = _family_calendar_entity(hass)
     if family_calendar is not None:
         entity_id, name = family_calendar
-        entry = {"entity": entity_id, "name": name, "color": "#6366F1"}
-        if toggled:
-            entry["filter"] = (
+        entries.append({
+            "entity": entity_id,
+            "name": name,
+            "color": "#6366F1",
+            "filter": (
                 f"${{ states['{_FAMILY_CALENDAR_SHOWN_ENTITY_ID}']?.state === 'on' "
                 "? '^$' : '.*' }"
-            )
-        entries.append(entry)
+            ),
+        })
 
     if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
-        entry = {"entity": BIRTHDAYS_ENTITY_ID, "name": "Birthdays", "color": "#33a02c"}
-        if toggled:
-            entry["filter"] = (
-                f"${{ states['{_BIRTHDAYS_SHOWN_ENTITY_ID}']?.state === 'on' ? '^$' : '.*' }}"
-            )
-        entries.append(entry)
+        entries.append({"entity": BIRTHDAYS_ENTITY_ID, "name": "Birthdays", "color": "#33a02c"})
 
-    holiday_filter = (
-        f"${{ states['{_HOLIDAYS_SHOWN_ENTITY_ID}']?.state === 'on' ? '^$' : '.*' }}"
-        if toggled
-        else None
-    )
     for entity_id, name in _holiday_calendar_entities(hass):
-        entry = {"entity": entity_id, "name": name, "color": "#ff7f00"}
-        if holiday_filter:
-            entry["filter"] = holiday_filter
-        entries.append(entry)
+        entries.append({"entity": entity_id, "name": name, "color": "#ff7f00"})
     return entries
 
 
 def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict | None:
     """The Kiosk bucket's calendar card - every given member's calendar always listed, each
     one's visibility toggled by its own `switch.family_dashboard_<id>_shown` state, plus
-    Birthdays/Holidays (toggled the same way, if they exist). `days`/`startingDay` are fixed to
-    week-planner-card's own `"month"` mode (see this module's docstring). Returns None if none
-    of the given members have a mapped calendar AND neither overlay exists - the caller omits
-    the card entirely rather than showing an empty grid.
+    Family (toggleable)/Birthdays/Holidays (always shown, no toggle - see `_overlay_entries`'s
+    docstring) if they exist. `days`/`startingDay` are fixed to week-planner-card's own
+    `"month"` mode (see this module's docstring). Returns None if none of the given members
+    have a mapped calendar AND neither overlay exists - the caller omits the card entirely
+    rather than showing an empty grid.
     """
     calendar_members = [m for m in members if _member_has_calendar(m)]
-    overlays = _overlay_entries(hass, toggled=True)
+    overlays = _overlay_entries(hass)
     if not calendar_members and not overlays:
         return None
 
@@ -278,10 +333,6 @@ def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict 
     toggle_entities += [_color_select_entity_id(m["member_id"]) for m in calendar_members]
     if _family_calendar_entity(hass) is not None:
         toggle_entities.append(_FAMILY_CALENDAR_SHOWN_ENTITY_ID)
-    if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
-        toggle_entities.append(_BIRTHDAYS_SHOWN_ENTITY_ID)
-    if _holiday_calendar_entities(hass):
-        toggle_entities.append(_HOLIDAYS_SHOWN_ENTITY_ID)
 
     return {
         "type": "custom:config-template-card",
@@ -290,7 +341,7 @@ def async_kiosk_calendar_card(hass: HomeAssistant, members: list[dict]) -> dict 
             "type": "custom:week-planner-card",
             "calendars": calendars,
             "days": "month",
-            "startingDay": "month",
+            "startingDay": "sunday",
             **_WEEK_PLANNER_STATIC_OPTIONS,
             "card_mod": {"style": _CARD_MOD_STYLE},
         },
@@ -301,16 +352,14 @@ async def async_calendar_view_card(
     hass: HomeAssistant, entry: ConfigEntry, members: list[dict]
 ) -> dict | None:
     """One week-planner-card listing every given member's mapped calendar proxy entity,
-    color-coded to their roster color, plus Family/Birthdays/Holidays - used for a personal
-    bucket's Calendar tab. Returns None if there's nothing at all to show.
+    color-coded to their roster color, plus Family (toggleable)/Birthdays/Holidays (always
+    shown, no toggle) - used for a personal bucket's Calendar tab. Returns None if there's
+    nothing at all to show.
 
-    Family/Birthdays/Holidays ARE toggleable here too (`toggled=True`, a live-reported
-    requirement - "always visible... though their view should be a toggle like any Roster
-    user"), via the
-    SAME shared switches the Kiosk bucket's card uses (`dashboard/registry.py`'s
-    `_personal_calendar_cards` wires in the matching toggle pills) - unlike per-member
-    calendars, which still have no per-member toggle in a personal bucket (nothing to filter,
-    there's only ever one or two calendars shown here).
+    Family's toggle uses the SAME shared switch the Kiosk bucket's card uses
+    (`dashboard/registry.py`'s `_personal_calendar_cards` wires in the matching toggle pill) -
+    unlike per-member calendars, which still have no per-member toggle in a personal bucket
+    (nothing to filter, there's only ever one or two calendars shown here).
 
     `days`/`startingDay` are fixed to week-planner-card's own `"month"` mode, same as the
     Kiosk bucket's own card (see this module's docstring) - a single, config-entry-wide
@@ -324,17 +373,13 @@ async def async_calendar_view_card(
         }
         for member in members
         if _member_has_calendar(member)
-    ] + _overlay_entries(hass, toggled=True)
+    ] + _overlay_entries(hass)
     if not calendars:
         return None
 
     toggle_entities = []
     if _family_calendar_entity(hass) is not None:
         toggle_entities.append(_FAMILY_CALENDAR_SHOWN_ENTITY_ID)
-    if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
-        toggle_entities.append(_BIRTHDAYS_SHOWN_ENTITY_ID)
-    if _holiday_calendar_entities(hass):
-        toggle_entities.append(_HOLIDAYS_SHOWN_ENTITY_ID)
 
     return {
         "type": "custom:config-template-card",
@@ -343,7 +388,7 @@ async def async_calendar_view_card(
             "type": "custom:week-planner-card",
             "calendars": calendars,
             "days": "month",
-            "startingDay": "month",
+            "startingDay": "sunday",
             **_WEEK_PLANNER_STATIC_OPTIONS,
             "card_mod": {"style": _CARD_MOD_STYLE},
         },
@@ -400,7 +445,7 @@ def _toggle_pill_base_styles(shown_entity_id: str) -> dict:
     which was the real cause of a live-reported "Birthdays/Holidays are far wider than Ada/
     Grace" bug: two different card TYPES (`tile` vs `custom:button-card`) size themselves
     differently in the same row even with identical `horizontal-stack` parenting. Both
-    `async_member_toggle_pills` and `async_birthdays_holidays_toggle_pills` build on this one
+    `async_member_toggle_pills` and `async_family_calendar_toggle_pill` build on this one
     shared base so they can never visually drift apart again - name/icon color both fade to
     gray when off, matching the legacy dashboard's own toggle-pill behavior.
     """
@@ -555,37 +600,39 @@ def _fixed_toggle_pill(shown_entity_id: str, name: str, icon: str, color_hex: st
     }
 
 
-def async_birthdays_holidays_toggle_pills(hass: HomeAssistant) -> list[dict]:
-    """Toggle-filter pills for Family/Birthdays/Holidays - used on BOTH the Kiosk bucket's and
-    every personal bucket's Calendar tab (see `dashboard/registry.py`'s
+def async_family_calendar_toggle_pill(hass: HomeAssistant) -> list[dict]:
+    """Toggle-filter pill for the Family calendar overlay - used on BOTH the Kiosk bucket's
+    and every personal bucket's Calendar tab (see `dashboard/registry.py`'s
     `_kiosk_calendar_cards`/`_personal_calendar_cards`), same shared pill styling as member
-    toggles (`_toggle_pill_base_styles`/`_fixed_toggle_pill`) - empty list entries omitted for
-    whichever overlay doesn't exist on this instance. One combined Holidays pill covers every
-    detected Holiday integration entry (US, Philippines, or any others added later). Name kept
-    as-is (not renamed to include "family") to avoid an unrelated diff across every caller -
-    it's simply "the fixed-overlay toggle pills" now, Family included."""
-    pills = []
-    if _family_calendar_entity(hass) is not None:
-        pills.append(
-            _fixed_toggle_pill(
-                _FAMILY_CALENDAR_SHOWN_ENTITY_ID, "Family", "mdi:home-heart", "#6366F1"
-            )
-        )
-    if hass.states.get(BIRTHDAYS_ENTITY_ID) is not None:
-        pills.append(
-            _fixed_toggle_pill(_BIRTHDAYS_SHOWN_ENTITY_ID, "Birthdays", "mdi:cake-variant", "#33a02c")
-        )
-    if _holiday_calendar_entities(hass):
-        pills.append(
-            _fixed_toggle_pill(_HOLIDAYS_SHOWN_ENTITY_ID, "Holidays", "mdi:flag-variant", "#ff7f00")
-        )
-    return pills
+    toggles (`_toggle_pill_base_styles`/`_fixed_toggle_pill`). Returns an empty list if no
+    Family calendar is currently detected.
+
+    2026-07-25: renamed from `async_birthdays_holidays_toggle_pills` and dropped the
+    Birthdays/Holidays pills entirely - a live request ("always display Holidays/Birthdays as
+    we currently do, but remove the button completely"). Those two overlays are still added
+    to the calendar grid itself (`_overlay_entries`), just permanently shown with nothing to
+    toggle - only Family kept its button, hence the rename (the old name was actively
+    misleading once it stopped producing any Birthdays/Holidays pill at all)."""
+    if _family_calendar_entity(hass) is None:
+        return []
+    return [
+        _fixed_toggle_pill(_FAMILY_CALENDAR_SHOWN_ENTITY_ID, "Family", "mdi:home-heart", "#6366F1")
+    ]
 
 
 def async_add_event_popup_card() -> dict:
     """The Add Event pop-up - ports `dashboards/family-hub.yaml` lines ~503-563's proven
     structure (plain entities card + all-day/timed conditional cards + submit button) onto
-    this integration's own owned scratch entities instead of `input_*` helpers."""
+    this integration's own owned scratch entities instead of `input_*` helpers.
+
+    2026-07-25: Start/End Date is now ONE shared row (used by both all-day and timed events -
+    only the time-of-day portion differs), with the Hour/Minute/AM-PM row conditional on All
+    Day being off - replacing the old combined `datetime` fields entirely (see
+    `event_time.py`'s docstring for why: HA's native datetime picker's 12-vs-24-hour display
+    depends on each VIEWER's own account settings, unusable for a shared kiosk). Recurring
+    follows the exact same "switch + conditional card" shape as All Day Event (a live
+    request), revealing the Recurrence preset picker only when on.
+    """
     return {
         "type": "custom:bubble-card",
         "card_type": "pop-up",
@@ -601,8 +648,16 @@ def async_add_event_popup_card() -> dict:
                     {"entity": "text.family_dashboard_event_title", "name": "Title"},
                     {"entity": "text.family_dashboard_event_description", "name": "Description"},
                     {"entity": "switch.family_dashboard_event_all_day", "name": "All Day Event"},
+                    {"entity": "switch.family_dashboard_event_recurring", "name": "Recurring?"},
                 ],
                 "show_header_toggle": False,
+            },
+            {
+                "type": "entities",
+                "entities": [
+                    {"entity": "date.family_dashboard_event_start_date", "name": "Start Date"},
+                    {"entity": "date.family_dashboard_event_end_date", "name": "End Date"},
+                ],
             },
             {
                 "type": "conditional",
@@ -610,19 +665,22 @@ def async_add_event_popup_card() -> dict:
                 "card": {
                     "type": "entities",
                     "entities": [
-                        {"entity": "datetime.family_dashboard_event_start", "name": "Start"},
-                        {"entity": "datetime.family_dashboard_event_end", "name": "End"},
+                        {"entity": "number.family_dashboard_event_start_hour", "name": "Start Hour"},
+                        {"entity": "number.family_dashboard_event_start_minute", "name": "Start Minute"},
+                        {"entity": "select.family_dashboard_event_start_ampm", "name": "Start AM/PM"},
+                        {"entity": "number.family_dashboard_event_end_hour", "name": "End Hour"},
+                        {"entity": "number.family_dashboard_event_end_minute", "name": "End Minute"},
+                        {"entity": "select.family_dashboard_event_end_ampm", "name": "End AM/PM"},
                     ],
                 },
             },
             {
                 "type": "conditional",
-                "conditions": [{"entity": "switch.family_dashboard_event_all_day", "state": "on"}],
+                "conditions": [{"entity": "switch.family_dashboard_event_recurring", "state": "on"}],
                 "card": {
                     "type": "entities",
                     "entities": [
-                        {"entity": "date.family_dashboard_event_start_date", "name": "Start Date"},
-                        {"entity": "date.family_dashboard_event_end_date", "name": "End Date"},
+                        {"entity": "select.family_dashboard_event_recurrence", "name": "Repeats"},
                     ],
                 },
             },
@@ -631,16 +689,20 @@ def async_add_event_popup_card() -> dict:
                 "title": "Remind me",
                 "entities": [
                     {
-                        "entity": "switch.family_dashboard_event_remind_1_week_before",
-                        "name": "1 Week Before",
+                        "entity": "number.family_dashboard_event_remind_weeks_before",
+                        "name": "Weeks Before",
                     },
                     {
-                        "entity": "switch.family_dashboard_event_remind_1_day_before",
-                        "name": "1 Day Before",
+                        "entity": "number.family_dashboard_event_remind_days_before",
+                        "name": "Days Before",
                     },
                     {
-                        "entity": "switch.family_dashboard_event_remind_1_hour_before",
-                        "name": "1 Hour Before",
+                        "entity": "number.family_dashboard_event_remind_hours_before",
+                        "name": "Hours Before",
+                    },
+                    {
+                        "entity": "number.family_dashboard_event_remind_minutes_before",
+                        "name": "Minutes Before",
                     },
                 ],
                 "show_header_toggle": False,

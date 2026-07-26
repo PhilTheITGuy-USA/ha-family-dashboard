@@ -40,8 +40,18 @@ class FamilyDashboardStrategy {
       (view) => typeof view.path === "string" && view.path.endsWith(suffix)
     );
 
+    // A dashboard strategy's return value becomes the ENTIRE resolved dashboard config, not
+    // a patch merged onto the stored one - any key from the stored config this doesn't
+    // explicitly forward (like `theme`) is silently dropped. Live-verified real bug, not
+    // theoretical: registry.py sets `theme: "Family Dashboard"` at the top level of the
+    // stored config, but this function only ever read/returned `title`/`views`, so the
+    // "Family Dashboard" theme (the 'Ovo' font, every `card-mod-theme` CSS variable) has
+    // never actually applied on ANY install since this strategy was introduced - completely
+    // independent of whether card_mod itself is installed, since this is a dashboard-level
+    // theme resolution issue, not a missing-resource one.
     return {
       title: strategyConfig.title || "Family Dashboard",
+      theme: config && config.theme,
       views: views,
     };
   }

@@ -392,9 +392,12 @@ async def test_kiosk_calendar_has_toggle_filter_switches_for_every_mapped_member
     week_planner = template_card["card"]
     assert week_planner["type"] == "custom:week-planner-card"
     # Fixed to week-planner-card's own full-month mode - no view-switcher control (removed
-    # 2026-07-25), no leading/trailing days from adjacent months.
+    # 2026-07-25). startingDay: "sunday" (not "month", 2026-07-26 Skylight-inspired redesign)
+    # aligns the grid to a real Sun-Sat week so the header row's weekday labels are always
+    # true - leading/trailing padding days render as fully empty boxes (isOutsideMonth), not
+    # real adjacent-month day numbers (a live-rejected option, see dashboard.py's docstring).
     assert week_planner["days"] == "month"
-    assert week_planner["startingDay"] == "month"
+    assert week_planner["startingDay"] == "sunday"
     calendars = week_planner["calendars"]
     # Event color is also live-templated to the member's roster color, not a static hex
     # baked in at generation time - see async_kiosk_calendar_card's own inline comment.
@@ -445,9 +448,12 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
     week_planner = template_card["card"]
     assert week_planner["type"] == "custom:week-planner-card"
     # Fixed to week-planner-card's own full-month mode - no view-switcher control (removed
-    # 2026-07-25), no leading/trailing days from adjacent months.
+    # 2026-07-25). startingDay: "sunday" (not "month", 2026-07-26 Skylight-inspired redesign)
+    # aligns the grid to a real Sun-Sat week so the header row's weekday labels are always
+    # true - leading/trailing padding days render as fully empty boxes (isOutsideMonth), not
+    # real adjacent-month day numbers (a live-rejected option, see dashboard.py's docstring).
     assert week_planner["days"] == "month"
-    assert week_planner["startingDay"] == "month"
+    assert week_planner["startingDay"] == "sunday"
     assert [c["entity"] for c in week_planner["calendars"]] == [
         "calendar.family_dashboard_ada_calendar",
         "calendar.family_shared",
@@ -465,12 +471,12 @@ async def test_linked_member_calendar_shows_own_plus_family_calendar_only(hass):
     )
 
 
-async def test_holidays_overlay_shows_every_country_toggleable_on_both_bucket_kinds(hass):
+async def test_holidays_overlay_shows_every_country_always_visible_no_toggle(hass):
     """Two Holiday integration entries (US + Philippines) both show up automatically - no
-    hardcoded single country - under one shared toggle, on BOTH the Kiosk bucket's and a
-    linked member's own personal bucket's Calendar tab (a live-reported requirement: these
-    overlays must always be visible everywhere, toggleable like any roster member's own
-    calendar, not Kiosk-only fixed layers)."""
+    hardcoded single country - on BOTH the Kiosk bucket's and a linked member's own personal
+    bucket's Calendar tab. 2026-07-25: Holidays lost its toggle pill entirely (a live request
+    - "always display Holidays as we currently do, but remove the button completely") - no
+    `filter` key at all now, permanently shown, unlike Family which keeps its own toggle."""
     from homeassistant.helpers import entity_registry as er
 
     ada_account = await hass.auth.async_create_user(name="Ada Account")
@@ -507,8 +513,8 @@ async def test_holidays_overlay_shows_every_country_toggleable_on_both_bucket_ki
 
     kiosk_cards = _view_cards(_views_by_path(config)["calendar-kiosk"])
     ada_cards = _view_cards(_views_by_path(config)["calendar-ada"])
-    assert _has_holidays_pill(kiosk_cards)
-    assert _has_holidays_pill(ada_cards)
+    assert not _has_holidays_pill(kiosk_cards)
+    assert not _has_holidays_pill(ada_cards)
 
     ada_template_card = next(
         c for c in ada_cards if c.get("type") == "custom:config-template-card"
@@ -517,8 +523,8 @@ async def test_holidays_overlay_shows_every_country_toggleable_on_both_bucket_ki
         c for c in ada_template_card["card"]["calendars"] if c["name"] in ("United States", "Philippines")
     ]
     assert len(holiday_calendars) == 2
-    assert all("filter" in c for c in holiday_calendars)
-    assert "switch.family_dashboard_holidays_shown" in ada_template_card["entities"]
+    assert all("filter" not in c for c in holiday_calendars)
+    assert "switch.family_dashboard_holidays_shown" not in ada_template_card["entities"]
 
 
 async def test_calendar_controls_omitted_when_nobody_has_calendar_enabled(hass):

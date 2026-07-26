@@ -30,9 +30,10 @@ Per-tab content by bucket (see the rebuild plan's "Decided" section for the full
   shows just their own calendar plus the shared Family calendar (if any), fixed - no
   per-member toggle pills to show/hide. Both bucket kinds' grids are fixed to a full-month
   view (no view-switcher control - removed 2026-07-25, see `modules/calendar/dashboard.py`'s
-  docstring) and DO share the same Birthdays/Holidays toggle pills
-  (`async_birthdays_holidays_toggle_pills`) - config-entry-scoped entities, not per-viewer, so
-  toggling one in either bucket moves the other too.
+  docstring) and DO share the same Family toggle pill (`async_family_calendar_toggle_pill`) -
+  a config-entry-scoped entity, not per-viewer, so toggling it in either bucket moves the
+  other too. Birthdays/Holidays are always shown in both buckets with no toggle at all
+  (2026-07-25, see `modules/calendar/dashboard.py`'s `_overlay_entries` docstring).
 - Lists: Kiosk shows every member's lists under a per-member header; a linked member's bucket
   shows just their own, no header.
 - Chores: Kiosk shows every kid's chores/rewards with the same kind of toggle-filter pills,
@@ -65,8 +66,8 @@ from ..const import (
 from ..modules.calendar.dashboard import (
     async_add_event_button,
     async_add_event_popup_card,
-    async_birthdays_holidays_toggle_pills,
     async_calendar_view_card,
+    async_family_calendar_toggle_pill,
     async_kiosk_calendar_card,
     async_member_toggle_pills,
 )
@@ -105,6 +106,19 @@ _VIEW_BACKGROUND = {
 
 _MAX_COLUMNS = 4
 
+# Must match themes/family_dashboard.yaml's own top-level key exactly. Set on EVERY view
+# individually (`_build_view`), not just once at the dashboard's own top level - live-verified
+# real bug (2026-07-25): this dashboard uses a custom client-side STRATEGY
+# (`www/family-dashboard-strategy.js`), and a strategy's return value becomes the entire
+# resolved dashboard config, not a patch merged onto the stored one. The strategy already
+# forwards `views` unmodified, so a per-view theme survives that resolution even though the
+# dashboard-level `theme` key (also still set below, harmless, matches what "Manage
+# dashboards" shows) empirically does not - confirmed by checking computed styles in a real
+# browser (`--primary-font-family` was empty and zero requests to Google Fonts fired) both
+# before AND after passing `theme` through the strategy's own return value, so the fix had to
+# be per-view instead, not just forwarding the key through the strategy.
+_THEME_NAME = "Family Dashboard"
+
 
 def _build_view(
     title: str, path: str, cards: list[dict], user_ids: list[str], *, subview: bool = True
@@ -142,6 +156,7 @@ def _build_view(
         "type": "sections",
         "max_columns": _MAX_COLUMNS,
         "subview": subview,
+        "theme": _THEME_NAME,
         "sections": [{"type": "grid", "column_span": _MAX_COLUMNS, "cards": cards}],
         "background": _VIEW_BACKGROUND,
         # View visibility hides a view from the nav bar; it is NOT a hard access-control
@@ -347,7 +362,7 @@ async def _kiosk_calendar_cards(
     """Returns `(controls_row_pills, content_cards)` - the toggle pills/Add Event controls go
     into their OWN row below the fixed Home/Lists/Chores/Settings hub row (see
     `_nav_row`/`_calendar_controls_row`), decoupled so the hub row's width never depends on
-    roster size. Pill order (member toggles, then Birthdays/Holidays, then Add Event) matches
+    roster size. Pill order (member toggles, then Family, then Add Event) matches
     `Family Dashboard - Main.jpg`'s own left-to-right order for these controls.
     """
     if not _any_calendar_enabled(roster):
@@ -355,7 +370,7 @@ async def _kiosk_calendar_cards(
 
     extra_pills = [
         *async_member_toggle_pills(roster),
-        *async_birthdays_holidays_toggle_pills(hass),
+        *async_family_calendar_toggle_pill(hass),
         async_add_event_button(),
     ]
     card = async_kiosk_calendar_card(hass, roster)
@@ -374,14 +389,14 @@ async def _personal_calendar_cards(
     # one flagged roster member's own mapping had to be passed through explicitly.
     card = await async_calendar_view_card(hass, entry, [member])
     grid = [card] if card else [_NO_CALENDARS_CARD]
-    # Add Event + Birthdays/Holidays toggle pills (a live-reported requirement - "always
-    # visible... though their view should be a toggle like any Roster user"), same shared
-    # switches the Kiosk bucket's own controls row uses.
+    # Add Event + Family toggle pill (Birthdays/Holidays are always shown here too, but have
+    # no pill to add - see `_overlay_entries`'s docstring), same shared switch the Kiosk
+    # bucket's own controls row uses.
     controls_row = {
         "type": "horizontal-stack",
         "cards": [
             async_add_event_button(),
-            *async_birthdays_holidays_toggle_pills(hass),
+            *async_family_calendar_toggle_pill(hass),
         ],
     }
     return [controls_row, *grid, async_add_event_popup_card()]
@@ -559,7 +574,7 @@ async def async_build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) 
     user_bucket_map = {uid: bucket.key for bucket in buckets for uid in bucket.user_ids}
     return {
         "title": "Family Dashboard",
-        "theme": "Family Dashboard",
+        "theme": _THEME_NAME,
         "strategy": {
             "type": "custom:family-dashboard",
             "title": "Family Dashboard",
