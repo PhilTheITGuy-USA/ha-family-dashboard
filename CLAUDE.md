@@ -83,7 +83,22 @@ confirm the resulting entities/config entry via `GET /api/states` /
   Gitignored entirely — it's runtime state (db, logs, `.storage`, `secrets.yaml`), not
   source. `config/configuration.yaml` is HA's own entry point (unrelated to the integration's
   `custom_components/` code until that gets copied into `config/custom_components/` for a
-  live-validation run, per above).
+  live-validation run, per above). It's a plain bind mount, not a Docker volume, so
+  `docker compose down`/`up` alone never touches it - only losing the `config/` directory
+  itself (disk failure, accidental delete, moving to a new machine) actually needs recovery.
+  `config.base-snapshot.tar.gz` (repo root, gitignored - same sensitivity as `dev.env`: it
+  contains the real auth database, including the `dunsel` owner account's Long-Lived Access
+  Token) is a point-in-time snapshot of `config/` taken 2026-07-26, meant to be the
+  restorable "base" state for this test bench (roster: Phil/Lhen/Tristan/Harlee; HA users
+  dunsel/Marcus/Kiosk; a `calendar.family`/`calendar.ava` test fixture and US/Philippines
+  Holiday entries; family_dashboard already installed and configured). To restore:
+  `docker compose down`, delete/rename the existing `config/`, `tar -xzf
+  config.base-snapshot.tar.gz`, `docker compose up -d`. This snapshot doesn't auto-update -
+  if the test bench's roster/fixtures meaningfully change going forward and the new state
+  should become the new restore point, re-run the same `docker compose stop` + `tar -czf` +
+  `docker compose start` sequence to replace it (stop first: HA's SQLite recorder db and
+  `.storage` JSON files can be mid-write while running, and a snapshot taken then risks
+  restoring a corrupted/inconsistent state).
 - `custom_components/family_dashboard/` — the integration's source.
   - `const.py` — domain, roster/feature constants, the `FEATURES` registry (Calendar/Lists/
     Chores & Rewards), color/avatar constants. Read its module docstring first; it records
@@ -92,6 +107,10 @@ confirm the resulting entities/config entry via `GET /api/states` /
     sequence (roster → colors → per-member features → link HA users → per-feature
     sub-flows → confirm) and `FamilyDashboardOptionsFlow` (reconfigure after initial setup,
     reuses the same `build_*_schema`/`parse_*_input` functions as the initial flow).
+    `strings.json` and `translations/en.json` are byte-identical and both hand-maintained —
+    a new/changed step's title, description, or field labels need editing in both files or
+    the English UI silently falls back to stale/missing text; there's no build step that
+    generates one from the other.
   - `__init__.py` — `async_setup_entry`: forwards Settings' always-on platforms plus the
     union of every roster member's selected features' platforms, seeds static assets
     (`assets.py`), then builds and registers the generated Lovelace dashboard
@@ -117,6 +136,52 @@ confirm the resulting entities/config entry via `GET /api/states` /
     must be handled; `frontend.async_register_built_in_panel`'s kwargs differ by version too)
     — reread it before touching dashboard *registration* (as opposed to dashboard *content*,
     which is `registry.py`'s concern).
+  - The household-shared calendar ("Family calendar") is auto-detected, not roster-mapped:
+    `modules/calendar/dashboard.py`'s `_family_calendar_entity` scans for any `calendar.*`
+    entity whose name matches "Family" *exactly* (case-insensitively) and, if found, adds it
+    as its own always-on-by-default toggle pill (`switch.family_dashboard_family_calendar_shown`)
+    on both the Kiosk bucket's and every personal bucket's calendar card — same mechanism as
+    the Birthdays/Holidays overlays. This replaced an earlier design where one flagged roster
+    member's own calendar mapping had to double as the shared calendar (sacrificing that
+    member's personal view); a live install later showed the exact-name match is a real
+    gotcha — a properly-connected shared calendar named anything other than literally "Family"
+    silently never appears, which is why SETUP.md's prerequisites/wizard/Known-Issues sections
+    call this requirement out explicitly. Don't assume a missing Family calendar on a live
+    install is a code bug before checking the entity's actual name.
+  - The Add Event popup's Start/End time fields are a decomposed Date + Hour(1-12) + Minute +
+    AM/PM group per side (`modules/calendar/event_time.py`), not HA's native `datetime`
+    picker — that picker's 12-vs-24-hour display depends on each *viewer's own* HA account
+    profile setting (Settings > General > Time Format), confirmed directly against HA
+    frontend source, which a shared wall-mounted kiosk can't rely on. `event_time.py` is the
+    single source of truth for all 8 fields' unique-id constants (even though the entity
+    classes themselves live in `date.py`/`number.py`/`select.py` per the usual one-file-per-
+    platform convention) and owns `async_recompute_end_from_start`, composing/decomposing
+    through a real Python `datetime` so a Start near midnight correctly rolls End to the next
+    calendar day — don't reimplement this as hour-of-day arithmetic by hand.
+  - Recurring events (`switch.family_dashboard_event_recurring` + a Recurrence preset select,
+    same "switch reveals a conditional card" shape as All Day Event) work by calling the
+    target calendar entity's `async_create_event` *directly* (`events.py`), not via the
+    `calendar.create_event` service — confirmed by reading HA core source that the service's
+    own schema has no `rrule` field at all, even though the two calendar backends this project
+    supports (local_calendar, google) both accept one when called directly. Bypassing the
+    service means replicating its own `CalendarEntityFeature.CREATE_EVENT` support check by
+    hand (`_resolve_calendar_entity`) and its localization step (`event_time.compose_datetime`
+    must return a timezone-*aware* datetime via `dt_util.as_local` — a naive one raises
+    `Expected all values to have a timezone`, since the service normally does that
+    localization itself before the entity ever sees the value).
+  - Live-verified gotcha (2026-07-25, applies to ANY future new entity, not just this
+    session's): if the shared "Family Dashboard" device has already been assigned to an HA
+    *area* (a normal thing to do for a kiosk device) by the time a brand-new entity is first
+    registered, HA's entity registry prefixes its auto-generated entity_id with the area name
+    too (e.g. `number.living_room_family_dashboard_...`), not just the device name — confirmed
+    by reading `entity_registry.py`'s `_async_get_full_entity_name` directly. Every entity
+    shipped before this was discovered dodged it only by luck of being created before any area
+    was ever assigned; a live scan afterward found several pre-existing entities already
+    affected (`text.living_room_family_dashboard_birthdate_entry` and others from the Chores
+    scheduling feature) that were never fixed — a real latent bug across the whole integration,
+    not something this session's fix (pinning `self.entity_id` explicitly in `__init__` on
+    every entity added since) retroactively corrects. New entities going forward should keep
+    pinning `entity_id` explicitly; a blanket fix for pre-existing entities is still open.
   - `assets.py` — seeds default avatars/background/theme from the package's own `www/`/
     `themes/` into `/config/www/family_dashboard/`/`/config/themes/` on first setup (HA
     can't serve files from inside a custom component's package directory directly).
@@ -148,6 +213,9 @@ confirm the resulting entities/config entry via `GET /api/states` /
     scratch-field "Add" popups). Each module registers and handles its own services in its
     own `async_setup_entry` — this file only declares the schemas HA's service-call UI and
     validation use.
+  - Chores & Rewards management (add/edit/delete) lives on the Chores tab behind the same
+    Parent PIN gate as Parent Review, not on the (unprotected) Settings tab where it started —
+    a live-reported gap, since it originally had no PIN gate at all.
   - Chores support an OPTIONAL per-chore `schedule_days` field (2026-07-21,
     `modules/chores/dashboard.py`/`sensor.py`) — absent/`None` (every chore before this
     feature) means visible/claimable every day, unchanged; a list of weekdays means only
@@ -160,13 +228,21 @@ confirm the resulting entities/config entry via `GET /api/states` /
     `sensor.<device>_day_of_week` entity that rolls over at local midnight via
     `async_track_time_change`) — same "no backend claim-locking" philosophy `frequency`
     already established, not new enforcement.
-  - `www/vendor/` — vendored, unmodified third-party Lovelace cards (`button-card`,
-    `bubble-card`, `config-template-card`, `week-planner-card`) the generated dashboard
-    depends on, bundled so the dashboard works with no separate manual HACS install (see
-    `ATTRIBUTIONS.md` for exact pinned versions/licenses). `week-planner-card` in particular
-    is pinned to the exact version `modules/calendar/dashboard.py` was built and validated
-    against — don't bump it without re-reading that module's docstring on its
-    filter-semantics dependency on that version's internals.
+  - The generated dashboard depends on five third-party Lovelace cards (`button-card`,
+    `bubble-card`, `card-mod`, `config-template-card`, `week-planner-card`) that are now a
+    **manual HACS prerequisite, not vendored** — see SETUP.md's Prerequisites section for the
+    exact versions to install. They used to be bundled directly under a `www/vendor/`
+    directory (removed 2026-07-26); reversed on a live-reported real risk, not a style
+    preference: none of the five guard their own `customElements.define(...)` call with an
+    existence check first (confirmed by reading each one directly), so a user who already had
+    any of them installed separately for their own other dashboards would end up with two
+    copies racing to register the same custom element — the loser throws an uncaught console
+    error and silently never takes effect, and for `week-planner-card` specifically, this
+    integration's own calendar behavior depends on the *exact* pinned v1.14.1's filter-
+    matching internals (see `modules/calendar/dashboard.py`'s own docstring), so a
+    differently-versioned copy silently winning that race could break the calendar in a way
+    that has nothing to do with this integration's own code. See `assets.py`'s and
+    `dashboard/register.py`'s module docstrings for the full history of this reversal.
 - `tests/` — pytest-homeassistant-custom-component suite, one file per module/flow/concern:
   `test_config_flow.py`, `test_dashboard.py`, `test_assets.py`, `test_util.py`,
   `test_roster.py`, `test_unmapped_users.py`, `test_notify_resolution.py`,

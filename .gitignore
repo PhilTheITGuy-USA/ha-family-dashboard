@@ -9,4 +9,5 @@ dev.env
 family-dashboard-dev-config/
 config/
 config.bak-*/
+config.base-snapshot.tar.gz
 .claude/
