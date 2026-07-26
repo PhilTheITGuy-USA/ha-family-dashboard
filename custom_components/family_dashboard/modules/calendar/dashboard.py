@@ -160,9 +160,22 @@ _CARD_MOD_STYLE = (
     ".today .number { border-radius: 6px !important; background-color: #ff9800 !important; "
     "color: white !important; padding: 0 5px !important; } "
     ".event { color: #222 !important; background-color: var(--border-color) !important; "
-    "border-radius: 8px !important; font-size: 1.05em !important; padding: 2px 5px !important; } "
+    "border-radius: 8px !important; font-size: 1.05em !important; padding: 2px 5px !important; "
+    "max-width: 100% !important; box-sizing: border-box !important; } "
     ".event.past { opacity: .35 !important; } "
     ".time { color: #444 !important; font-size: 0.95em !important; } "
+    # Live-reported real bug: showLocation (this module's own choice, see
+    # _WEEK_PLANNER_STATIC_OPTIONS) renders event.location as a plain, unconstrained
+    # `.location` div with no override of its own in week-planner-card's own CSS - fine for
+    # ordinary addresses (they wrap normally at spaces/commas), but a video-call URL has no
+    # word-break opportunities at all, so the browser let it overflow horizontally straight
+    # into the NEXT day's column instead of wrapping within its own cell. `overflow-wrap:
+    # anywhere` (word-break: break-word as an older-browser fallback) forces a break inside
+    # an unbreakable run of characters when nothing else fits, same as `max-width: 100%`
+    # above on `.event` itself guarantees the whole pill can never grow past its own day
+    # cell's width in the first place, regardless of what's inside it.
+    ".location { overflow-wrap: anywhere !important; word-break: break-word !important; "
+    "max-width: 100% !important; } "
     ".none { background-color: transparent !important; color: #9aa0a6 !important; "
     "box-shadow: none !important; border: none !important; }"
 )
