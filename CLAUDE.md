@@ -30,13 +30,8 @@ Access Token for driving the REST/WebSocket API directly.
 
 ## Running the test suite
 
-```bash
-python -m venv .venv && ./.venv/Scripts/python.exe -m pip install -r requirements_test.txt
-./.venv/Scripts/python.exe -m pytest tests/ -v      # run everything
-./.venv/Scripts/python.exe -m pytest tests/test_config_flow.py -v   # single file
-```
-
-**On native Windows, `pytest-homeassistant-custom-component` does not work.** Two independent
+**On native Windows, `pytest-homeassistant-custom-component` does not work at all** — don't
+bother creating a `.venv` here or running `pytest` directly with the host Python. Two independent
 blockers, either one fatal on its own: it unconditionally calls
 `pytest_socket.disable_socket(allow_unix_socket=True)` before every test, but asyncio's
 Windows `ProactorEventLoop` needs a real (non-unix) socket for its self-pipe, so every test
@@ -52,6 +47,10 @@ genuinely exists on PyPI (an image-specific pip quirk, not a real availability g
 ```bash
 docker run --rm -v "/c/ha-test-bench:/app" -w /app python:3.14-slim \
   bash -c "pip install -q -r requirements_test.txt && python -m pytest tests/ -v"
+
+# single file — same container, just narrow the pytest target:
+docker run --rm -v "/c/ha-test-bench:/app" -w /app python:3.14-slim \
+  bash -c "pip install -q -r requirements_test.txt && python -m pytest tests/test_config_flow.py -v"
 ```
 
 (On Windows/Git Bash, prefix with `MSYS_NO_PATHCONV=1` so `-w /app` isn't mangled into a
@@ -77,6 +76,11 @@ confirm the resulting entities/config entry via `GET /api/states` /
 
 ## Structure
 
+- `SETUP.md` — the end-user-facing setup guide (HACS install steps, the five required
+  third-party Lovelace cards and their tested versions, prerequisites, Known Issues). Several
+  gotchas noted elsewhere in this file (Family-calendar exact-name matching, week-planner-card
+  version pinning) are also called out here for the end user — keep both in sync when either
+  changes.
 - `docker-compose.yml` — the HA test-instance service definition (container name
   `ha-test-bench`, port 8123, timezone `America/New_York`).
 - `config/` — the test instance's live state (bind-mounted into the container at `/config`).
