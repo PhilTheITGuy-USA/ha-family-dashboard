@@ -4,6 +4,7 @@ call + reminder tag generation + scratch-field reset).
 """
 from __future__ import annotations
 
+import homeassistant.components.datetime as datetime_component
 from homeassistant.components.calendar import CalendarEntity, CalendarEntityFeature, CalendarEvent
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
@@ -11,6 +12,17 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, setup_
 
 from custom_components.family_dashboard.const import DOMAIN
 from custom_components.family_dashboard.modules.settings.sensor import avatars_dir
+
+
+def _datetime_native_value(hass: HomeAssistant, entity_id: str):
+    """Fetch a `datetime` entity's real `native_value` directly rather than its formatted
+    `state` string - `DateTimeEntity.state` renders as a UTC ISO string
+    (`value.astimezone(UTC).isoformat(...)`), not the naive local wall-clock string a test
+    might expect, so comparing against `.state` directly is timezone-fragile. Comparing
+    individual fields (year/month/day/hour/minute) on the real object sidesteps that."""
+    component = hass.data[datetime_component.DATA_COMPONENT]
+    entity = component.get_entity(entity_id)
+    return entity.native_value if entity else None
 
 
 class FakeSourceCalendar(CalendarEntity):
@@ -128,7 +140,7 @@ async def test_add_event_creates_real_event_with_reminder_tags_and_resets_fields
     """Weeks/days/hours/minutes-before are independent configurable fields, not fixed 1-unit
     checkboxes (2026-07-25 live request) - weeks translate to the tag format's "d" component
     (there's no "w"), hours+minutes combine into one tag since they're the same tier."""
-    await _setup_fake_source_calendar(hass)
+    fake = await _setup_fake_source_calendar(hass)
     roster = [_member("Ada", "ada", calendar_entity_id="calendar.fake_source")]
     await _setup_entry(hass, roster)
 
@@ -143,12 +155,12 @@ async def test_add_event_creates_real_event_with_reminder_tags_and_resets_fields
         blocking=True,
     )
     await hass.services.async_call(
-        "date", "set_value",
-        {"entity_id": "date.family_dashboard_event_start_date", "date": "2026-08-01"},
+        "datetime", "set_value",
+        {"entity_id": "datetime.family_dashboard_event_start", "datetime": "2026-08-01 09:00:00"},
         blocking=True,
     )
-    # Start's default time (9:00 AM) already cascaded End to 10:00 AM same day - see
-    # test_start_time_defaults_end_to_one_hour_later for dedicated coverage of that.
+    # Start already cascaded End to 10:00 AM same day - see
+    # test_start_datetime_defaults_end_to_one_hour_later for dedicated coverage of that.
     await hass.services.async_call(
         "number", "set_value",
         {"entity_id": "number.family_dashboard_event_remind_weeks_before", "value": 2},
@@ -172,29 +184,28 @@ async def test_add_event_creates_real_event_with_reminder_tags_and_resets_fields
     )
     await hass.async_block_till_done()
 
-    events = await hass.services.async_call(
-        "calendar", "get_events",
-        {"entity_id": "calendar.fake_source", "duration": {"days": 365}},
-        blocking=True, return_response=True,
-    )
-    created = events["calendar.fake_source"]["events"]
-    assert len(created) == 1
-    assert created[0]["summary"] == "Dentist"
-    assert "[[reminder:14d]]" in created[0]["description"]  # 2 weeks -> 14 days
-    assert "[[reminder:1h30m]]" in created[0]["description"]  # hours+minutes combined
+    assert len(fake._events) == 1
+    created = fake._events[0]
+    assert created.summary == "Dentist"
+    assert "[[reminder:14d]]" in created.description  # 2 weeks -> 14 days
+    assert "[[reminder:1h30m]]" in created.description  # hours+minutes combined
     # No stray days-before tag - that field was left at 0.
-    assert created[0]["description"].count("[[reminder:") == 2
+    assert created.description.count("[[reminder:") == 2
 
     assert hass.states.get("text.family_dashboard_event_title").state == ""
     assert hass.states.get("number.family_dashboard_event_remind_weeks_before").state == "0"
     assert hass.states.get("number.family_dashboard_event_remind_hours_before").state == "0"
     assert hass.states.get("number.family_dashboard_event_remind_minutes_before").state == "0"
+    # Start/End datetime are reset after submit too, same hygiene as every other scratch
+    # field - otherwise the NEXT event created would silently inherit stale values.
+    assert hass.states.get("datetime.family_dashboard_event_start").state == "unknown"
+    assert hass.states.get("datetime.family_dashboard_event_end").state == "unknown"
 
 
 async def test_calendar_number_fields_round_to_whole_numbers(hass: HomeAssistant):
     """Live-reported: "1.2 days" or "1.5 hours before" is meaningless in this context - every
-    Weeks/Days/Hours/Minutes-before reminder field and every Start/End Hour/Minute field
-    rounds fractional input to the nearest whole number rather than storing it as-is."""
+    Weeks/Days/Hours/Minutes-before reminder field rounds fractional input to the nearest
+    whole number rather than storing it as-is."""
     await _setup_fake_source_calendar(hass)
     roster = [_member("Ada", "ada", calendar_entity_id="calendar.fake_source")]
     await _setup_entry(hass, roster)
@@ -213,71 +224,86 @@ async def test_calendar_number_fields_round_to_whole_numbers(hass: HomeAssistant
     )
     assert hass.states.get("number.family_dashboard_event_remind_hours_before").state == "2"
 
-    await hass.services.async_call(
-        "number", "set_value",
-        {"entity_id": "number.family_dashboard_event_start_minute", "value": 29.6},
-        blocking=True,
-    )
-    assert hass.states.get("number.family_dashboard_event_start_minute").state == "30"
 
-
-async def test_start_time_defaults_end_to_one_hour_later(hass: HomeAssistant):
+async def test_start_datetime_defaults_end_to_one_hour_later(hass: HomeAssistant):
     """A live request: once Start has been entered, End should default to the same date, one
     hour later, so the common case doesn't require manually filling in End too. Start/End are
-    now decomposed Date+Hour+Minute+AM-PM fields (2026-07-25, replacing a single combined
-    `datetime` entity - HA's native picker's AM/PM display depends on each viewer's own
-    account settings, unusable for a shared kiosk), composed through a real `datetime`
-    internally (not naive 12-hour arithmetic) so a Start near midnight correctly rolls End
-    over to the next calendar day."""
+    a single combined `datetime` entity per side (2026-07-26, reverted from a decomposed
+    Date+Hour+Minute+AM-PM group back to v0.9.0-beta.4's compact layout - see
+    event_time.py's docstring), composed through a real `datetime` internally so a Start near
+    midnight correctly rolls End over to the next calendar day. No separate AM/PM field is
+    involved - the native picker's own stored value is trusted directly (see event_time.py's
+    docstring for why an earlier same-day version's "correction" select was removed)."""
     await _setup_fake_source_calendar(hass)
     roster = [_member("Ada", "ada", calendar_entity_id="calendar.fake_source")]
     await _setup_entry(hass, roster)
 
     await hass.services.async_call(
-        "date", "set_value",
-        {"entity_id": "date.family_dashboard_event_start_date", "date": "2026-08-01"},
+        "datetime", "set_value",
+        {"entity_id": "datetime.family_dashboard_event_start", "datetime": "2026-08-01 09:00:00"},
         blocking=True,
     )
-    # Default Start time (9:00 AM) cascades to End = 10:00 AM, same day.
-    assert hass.states.get("date.family_dashboard_event_end_date").state == "2026-08-01"
-    assert hass.states.get("number.family_dashboard_event_end_hour").state == "10"
-    assert hass.states.get("number.family_dashboard_event_end_minute").state == "0"
-    assert hass.states.get("select.family_dashboard_event_end_ampm").state == "AM"
+    end_value = _datetime_native_value(hass, "datetime.family_dashboard_event_end")
+    assert (end_value.year, end_value.month, end_value.day, end_value.hour, end_value.minute) == (
+        2026, 8, 1, 10, 0,
+    )
 
     # A Start time near midnight correctly rolls End over to the next calendar day.
     await hass.services.async_call(
-        "number", "set_value",
-        {"entity_id": "number.family_dashboard_event_start_hour", "value": 11},
+        "datetime", "set_value",
+        {"entity_id": "datetime.family_dashboard_event_start", "datetime": "2026-08-01 23:30:00"},
         blocking=True,
     )
-    await hass.services.async_call(
-        "number", "set_value",
-        {"entity_id": "number.family_dashboard_event_start_minute", "value": 30},
-        blocking=True,
+    end_value = _datetime_native_value(hass, "datetime.family_dashboard_event_end")
+    assert (end_value.year, end_value.month, end_value.day, end_value.hour, end_value.minute) == (
+        2026, 8, 2, 0, 30,
     )
-    await hass.services.async_call(
-        "select", "select_option",
-        {"entity_id": "select.family_dashboard_event_start_ampm", "option": "PM"},
-        blocking=True,
-    )
-    assert hass.states.get("date.family_dashboard_event_end_date").state == "2026-08-02"
-    assert hass.states.get("number.family_dashboard_event_end_hour").state == "12"
-    assert hass.states.get("number.family_dashboard_event_end_minute").state == "30"
-    assert hass.states.get("select.family_dashboard_event_end_ampm").state == "AM"
 
     # The user's own subsequent End edit is the last word until Start changes again.
     await hass.services.async_call(
-        "number", "set_value",
-        {"entity_id": "number.family_dashboard_event_end_hour", "value": 3},
+        "datetime", "set_value",
+        {"entity_id": "datetime.family_dashboard_event_end", "datetime": "2026-08-02 03:00:00"},
         blocking=True,
     )
-    assert hass.states.get("number.family_dashboard_event_end_hour").state == "3"
+    end_value = _datetime_native_value(hass, "datetime.family_dashboard_event_end")
+    assert (end_value.year, end_value.month, end_value.day, end_value.hour, end_value.minute) == (
+        2026, 8, 2, 3, 0,
+    )
+
+
+async def test_add_event_uses_start_end_datetime_hour_directly(hass: HomeAssistant):
+    """No separate AM/PM select exists anymore (removed 2026-07-26) - the native `datetime`
+    entity's own stored value is passed straight through to `async_create_event`, since it's
+    already a correct, fully-resolved absolute time regardless of which display format
+    (12-hour or 24-hour) the viewer's account used to enter it."""
+    fake = await _setup_fake_source_calendar(hass)
+    roster = [_member("Ada", "ada", calendar_entity_id="calendar.fake_source")]
+    await _setup_entry(hass, roster)
+
+    await hass.services.async_call(
+        "datetime", "set_value",
+        {"entity_id": "datetime.family_dashboard_event_start", "datetime": "2026-08-01 21:00:00"},
+        blocking=True,
+    )
+    # Start's own cascade already defaulted End to 22:00 (10 PM), same day.
+
+    await hass.services.async_call(
+        "family_dashboard", "add_event",
+        {"entity_id": "select.family_dashboard_event_calendar"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert len(fake._events) == 1
+    created = fake._events[0]
+    assert created.start.hour == 21  # 9:00 PM
+    assert created.end.hour == 22  # 10:00 PM
 
 
 async def test_start_date_defaults_end_date_to_same_day(hass: HomeAssistant):
-    """Start Date and End Date are shared between all-day and timed events alike (only the
-    Hour/Minute/AM-PM fields are timed-only) - same default-then-editable cascade either way,
-    see `test_start_time_defaults_end_to_one_hour_later` for the timed-event coverage."""
+    """Start Date/End Date are all-day-only fields (a timed event uses the separate combined
+    `datetime` entity instead, see test_start_datetime_defaults_end_to_one_hour_later) - Start
+    Date still defaults End Date to the same day on every set."""
     await _setup_fake_source_calendar(hass)
     roster = [_member("Ada", "ada", calendar_entity_id="calendar.fake_source")]
     await _setup_entry(hass, roster)

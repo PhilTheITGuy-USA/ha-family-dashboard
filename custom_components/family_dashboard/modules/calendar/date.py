@@ -1,16 +1,16 @@
-"""Household-scoped `date` scratch entities for the Add Event popup's Start/End DATE fields -
-shared between all-day and timed events alike (only the time-of-day portion differs; see
-`number.py`/`select.py` for the Hour/Minute/AM-PM fields timed events layer on top). Not
-`RestoreEntity` - cleared after every submit, see `events.py`.
+"""Household-scoped `date` scratch entities for the Add Event popup's Start/End Date fields -
+used ONLY for all-day events (a timed event uses `datetime.py`'s combined Start/End field
+instead; see `event_time.py`'s docstring for why the two are separate branches again as of
+2026-07-26, not a shared field group the way they briefly were during the 2026-07-25
+decomposed-time redesign). Not `RestoreEntity` - cleared after every submit, see `events.py`.
 
 Forwarded once if any roster member has "calendar" enabled. Aggregated (alongside
 `modules/settings/date.py`'s always-on roster-birthdate fields) by the top-level `date.py`
 shim - see that file's docstring for why.
 
-The Start Date field (`_EventStartDate`) triggers `event_time.async_recompute_end_from_start`
-on every set, same as Start's Hour/Minute/AM-PM fields (`number.py`/`select.py`) - see that
-function's own docstring for the full "unconditional overwrite" reasoning. Unique-id constants
-for this whole 8-field group live in `event_time.py`, not here - see its own docstring for why.
+The Start Date field (`_EventStartDate`) triggers `event_time.async_recompute_end_date_from_
+start_date` on every set (defaulting End Date to the same day) - see that function's own
+docstring.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from ...const import DOMAIN
 from .event_time import (
     EVENT_END_DATE_UNIQUE_ID,
     EVENT_START_DATE_UNIQUE_ID,
-    async_recompute_end_from_start,
+    async_recompute_end_date_from_start_date,
 )
 
 
@@ -66,9 +66,9 @@ class _EventScratchDate(DateEntity):
 
 
 class _EventStartDate(_EventScratchDate):
-    """The Add Event popup's Start Date field - see `event_time.async_recompute_end_from_start`
-    for what happens on every set."""
+    """The Add Event popup's Start Date field (all-day only) - see `event_time.
+    async_recompute_end_date_from_start_date` for what happens on every set."""
 
     async def async_set_value(self, value: date) -> None:
         await super().async_set_value(value)
-        await async_recompute_end_from_start(self.hass, self._entry)
+        await async_recompute_end_date_from_start_date(self.hass, self._entry)

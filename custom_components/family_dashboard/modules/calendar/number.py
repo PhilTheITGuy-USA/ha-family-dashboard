@@ -1,17 +1,16 @@
-"""Household-scoped `number` entities for Calendar:
+"""Household-scoped `number` entities for Calendar: the Add Event popup's reminder lead-time
+fields - how many weeks/days/hours/minutes before an event to notify. Replaces the earlier
+fixed 1-week/1-day/1-hour checkboxes (`modules/calendar/switch.py`, removed 2026-07-25) with a
+live-requested "let me choose X weeks/days/hours/minutes before, not just a static 1" - each
+field is independent and 0 means "no reminder at this granularity", same "multiple
+independent reminders per event" semantics `reminders.py`'s `[[reminder:...]]` tag already
+supports (see `events.py`'s tag-building for how these four values become 1-3 tags).
 
-- Reminder lead-time fields: how many weeks/days/hours/minutes before an event to notify.
-  Replaces the earlier fixed 1-week/1-day/1-hour checkboxes (`modules/calendar/switch.py`,
-  removed 2026-07-25) with a live-requested "let me choose X weeks/days/hours/minutes before,
-  not just a static 1" - each field is independent and 0 means "no reminder at this
-  granularity", same "multiple independent reminders per event" semantics `reminders.py`'s
-  `[[reminder:...]]` tag already supports (see `events.py`'s tag-building for how these four
-  values become 1-3 tags).
-- Start/End Hour fields (1-12) and Minute fields - two of the four fields in each side's
-  Date+Hour+Minute+AM-PM group (`select.py` owns the AM/PM half) - see `event_time.py`'s
-  docstring for why this replaced a single combined `datetime` entity per side. Start's own
-  Hour/Minute fields trigger `event_time.async_recompute_end_from_start` on every set, same as
-  Start's Date field (`date.py`) and AM/PM field (`select.py`).
+Start/End Hour(1-12)/Minute fields used to live here too (2026-07-25's decomposed
+Date+Hour+Minute+AM-PM redesign) - removed 2026-07-26 reverting to a single combined
+`datetime` entity per side (`datetime.py`), a live preference for v0.9.0-beta.4's compact
+layout over that decomposition's "far too many clicks and opens sub windows" - see
+`event_time.py`'s docstring for the full reasoning and why no separate AM/PM field is needed.
 
 Not `RestoreEntity` - cleared (reset to their defaults) after every submit alongside the
 other scratch fields, see `events.py`.
@@ -28,16 +27,6 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ...const import DOMAIN
-from .event_time import (
-    DEFAULT_END_HOUR,
-    DEFAULT_MINUTE,
-    DEFAULT_START_HOUR,
-    EVENT_END_HOUR_UNIQUE_ID,
-    EVENT_END_MINUTE_UNIQUE_ID,
-    EVENT_START_HOUR_UNIQUE_ID,
-    EVENT_START_MINUTE_UNIQUE_ID,
-    async_recompute_end_from_start,
-)
 
 EVENT_REMIND_WEEKS_UNIQUE_ID = "event_remind_weeks_before"
 EVENT_REMIND_DAYS_UNIQUE_ID = "event_remind_days_before"
@@ -66,20 +55,6 @@ async def async_setup_entry(
                 entry, EVENT_REMIND_MINUTES_UNIQUE_ID, "Event Remind Minutes Before", 0, 59, 0,
                 icon="mdi:bell-ring-outline",
             ),
-            _EventStartTimeNumber(
-                entry, EVENT_START_HOUR_UNIQUE_ID, "Event Start Hour", 1, 12, DEFAULT_START_HOUR,
-            ),
-            _EventStartTimeNumber(
-                entry, EVENT_START_MINUTE_UNIQUE_ID, "Event Start Minute", 0, 59, DEFAULT_MINUTE,
-            ),
-            _CalendarScratchNumber(
-                entry, EVENT_END_HOUR_UNIQUE_ID, "Event End Hour", 1, 12, DEFAULT_END_HOUR,
-                icon="mdi:calendar-clock",
-            ),
-            _CalendarScratchNumber(
-                entry, EVENT_END_MINUTE_UNIQUE_ID, "Event End Minute", 0, 59, DEFAULT_MINUTE,
-                icon="mdi:calendar-clock",
-            ),
         ]
     )
 
@@ -87,9 +62,9 @@ async def async_setup_entry(
 class _CalendarScratchNumber(NumberEntity):
     """Generic Add Event popup scratch number field, reset to its own default after submit.
     Whole numbers only - live-reported: "1.2 days" or "1.5 hours" is meaningless for a
-    reminder lead time or a clock hour/minute. `_attr_native_step = 1` alone only constrains
-    the frontend's spinner/HTML5 step validation, which doesn't reliably block manual keyboard
-    entry (especially a kiosk's on-screen numeric keypad) - `async_set_native_value` rounds
+    reminder lead time. `_attr_native_step = 1` alone only constrains the frontend's
+    spinner/HTML5 step validation, which doesn't reliably block manual keyboard entry
+    (especially a kiosk's on-screen numeric keypad) - `async_set_native_value` rounds
     explicitly so a fractional value can never actually get stored, regardless of how it was
     typed in."""
 
@@ -140,12 +115,3 @@ class _CalendarScratchNumber(NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = round(value)
         self.async_write_ha_state()
-
-
-class _EventStartTimeNumber(_CalendarScratchNumber):
-    """Start's Hour or Minute field - see `event_time.async_recompute_end_from_start` for what
-    happens on every set."""
-
-    async def async_set_native_value(self, value: float) -> None:
-        await super().async_set_native_value(value)
-        await async_recompute_end_from_start(self.hass, self._entry)

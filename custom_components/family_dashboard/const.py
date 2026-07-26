@@ -84,15 +84,16 @@ DEFAULT_AVATAR_FILENAMES = ["person-solid.png", "people-group-solid.png"]
 # around as scope creeps.
 FEATURES: dict[str, dict] = {
     "calendar": {
-        # "select"/"text"/"switch"/"date"/"number" are all HOUSEHOLD-level scratch/display
-        # entities (Birthdays/Holidays toggles, Add Event popup fields including its
-        # weeks/days/hours/minutes-before reminder fields and its Date+Hour+Minute+AM-PM
-        # Start/End fields - see event_time.py's docstring for why there's no "datetime"
-        # platform here anymore) - forwarded once if ANY member has "calendar" enabled, same
-        # mechanism as per-member platforms, just not per-member entities within them. See
-        # modules/calendar/{select,text,switch,date,number}.py.
+        # "select"/"text"/"switch"/"date"/"number"/"datetime" are all HOUSEHOLD-level
+        # scratch/display entities (Birthdays/Holidays toggles, Add Event popup fields
+        # including its weeks/days/hours/minutes-before reminder fields, its all-day-only
+        # Start/End Date fields, and its timed-event Start/End datetime+AM-PM fields - see
+        # event_time.py's docstring for why "datetime" is back as of 2026-07-26) - forwarded
+        # once if ANY member has "calendar" enabled, same mechanism as per-member platforms,
+        # just not per-member entities within them. See
+        # modules/calendar/{select,text,switch,date,number,datetime}.py.
         "name": "Calendar",
-        "platforms": ["calendar", "select", "text", "switch", "date", "number"],
+        "platforms": ["calendar", "select", "text", "switch", "date", "number", "datetime"],
         "default_selected": True,
         "implemented": True,
     },

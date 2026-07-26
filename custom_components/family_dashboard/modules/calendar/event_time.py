@@ -1,41 +1,43 @@
-"""Shared cross-platform logic for the Add Event popup's Start/End time-of-day fields.
+"""Shared cross-platform logic for the Add Event popup's Start/End time fields.
 
-2026-07-25: replaced the earlier single combined `datetime.family_dashboard_event_start`/
-`_end` entities entirely (see git history for `datetime.py`, now deleted) with a decomposed
-Date + Hour(1-12) + Minute + AM/PM set of fields per side - a live request, since HA's native
-`datetime` more-info picker's 12-hour-vs-24-hour display is governed by each VIEWER's own HA
-account profile setting (Settings > General > Time Format, confirmed directly against HA's
-frontend source - `useAmPm`/`locale.time_format`), not anything a dashboard or integration can
-force. A shared wall-mounted kiosk (this project's primary use case) can't rely on a per-viewer
-account setting, so AM/PM is now built explicitly as our own fields instead, guaranteed
-regardless of who's looking at it or how their account is configured.
+2026-07-26: reverted to a single combined `datetime.family_dashboard_event_start`/`_end`
+entity per side (`datetime.py`) - a live preference for v0.9.0-beta.4's compact one-row-per-
+side layout over the 2026-07-25 decomposed Date+Hour(1-12)+Minute+AM/PM redesign this module
+used to own (see git history), which a live report called out as "far too many clicks and
+opens sub windows to enter hour, days, etc".
 
-Unique-id suffixes for all 8 fields (Start/End x Date/Hour/Minute/AM-PM) live here as the
-single source of truth, even though the entity CLASSES themselves live in their own
-per-platform files (`date.py`/`number.py`/`select.py`) per this codebase's usual module-per-
-platform convention - centralized here instead of scattered because `async_recompute_
-end_from_start` (below) needs to address all 8 by name, and because `events.py`'s submit
-logic reads all 8 too. `date.py`/`number.py`/`select.py`/`events.py` all import FROM this
-module; this module imports from none of them, so there's no import cycle.
+This module briefly also owned a separate explicit AM/PM select per side plus an
+`_apply_ampm_correction`/`resolve_event_datetime` step, on the assumption that HA's native
+`datetime` picker's raw stored hour couldn't be trusted across viewers whose HA accounts have
+different Time Format settings (12-hour vs 24-hour). Live-verified against HA's own frontend
+source (`ha-time-input`'s `_timeChanged` handler) that this assumption was wrong: the widget
+ALWAYS resolves to a correct, unambiguous absolute hour before the entity ever sees it,
+regardless of which format was displayed - in 12-hour mode the SAME row includes its own
+built-in AM/PM toggle (baked into `ha-base-time-input`, not something this integration
+controls or needs to duplicate); in 24-hour mode the hour field itself accepts 0-23, so
+there's no digit that could mean two different things. The bolt-on AM/PM select duplicated a
+question the native row already answers in the same tap, and could actively corrupt a
+correctly-entered 24-hour value if left at its default while the native widget's own value
+was already right - removed entirely, not just hidden.
 
-`async_recompute_end_from_start` is called by each of Start's 4 own field entities after
-their own `async_set_value`/`async_set_native_value`/`async_select_option` - same
-"unconditionally overwrite End on every Start change, not just the first" reasoning the old
-combined-datetime `_EventStartDateTime` used (see its git history): the user's own subsequent
-edit to any of End's 4 fields is the last word, since nothing else re-derives them except a
-further Start change. Composing/decomposing through a real Python `datetime` (rather than
-doing hour-of-day arithmetic in 12-hour space by hand) is what makes the "+1 hour" correctly
-roll into the next calendar day for a Start near midnight (e.g. 11:30 PM + 1h -> 12:30 AM the
-NEXT day) - see `_compose_datetime`/`_decompose_datetime`.
+`async_recompute_end_datetime_from_start` is called by Start's own `datetime` entity after
+every set - same "unconditionally overwrite End on every Start change, not just the first"
+reasoning the original combined-datetime `_EventStartDateTime` used before the 2026-07-25
+rewrite (see git history): the user's own subsequent edit to End is the last word, since
+nothing else re-derives it except a further Start change.
+
+`async_recompute_end_date_from_start_date` is the separate, much simpler all-day-only cascade
+(`date.py`'s Start Date -> End Date) - kept distinct from the timed-event cascade above since
+Date and `datetime` entities serve entirely different conditional branches of the popup
+(all-day vs timed), not a shared field group the way Start/End Date briefly was during the
+2026-07-25 redesign.
 """
 from __future__ import annotations
 
-from datetime import date as date_type, datetime, time, timedelta
+from datetime import timedelta
 
 import homeassistant.components.date as date_component
-import homeassistant.components.number as number_component
-import homeassistant.components.select as select_component
-import homeassistant.util.dt as dt_util
+import homeassistant.components.datetime as datetime_component
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -44,12 +46,8 @@ from ...const import DOMAIN
 
 EVENT_START_DATE_UNIQUE_ID = "event_start_date"
 EVENT_END_DATE_UNIQUE_ID = "event_end_date"
-EVENT_START_HOUR_UNIQUE_ID = "event_start_hour"
-EVENT_END_HOUR_UNIQUE_ID = "event_end_hour"
-EVENT_START_MINUTE_UNIQUE_ID = "event_start_minute"
-EVENT_END_MINUTE_UNIQUE_ID = "event_end_minute"
-EVENT_START_AMPM_UNIQUE_ID = "event_start_ampm"
-EVENT_END_AMPM_UNIQUE_ID = "event_end_ampm"
+EVENT_START_UNIQUE_ID = "event_start"
+EVENT_END_UNIQUE_ID = "event_end"
 
 # The Recurring switch + Recurrence preset picker's own constants also live here rather than
 # in select.py/switch.py (where their entity classes actually live) - events.py needs both,
@@ -64,19 +62,9 @@ EVENT_RECURRENCE_UNIQUE_ID = "event_recurrence"
 RECURRENCE_OPTIONS = ["Daily", "Weekly", "Monthly", "Annually", "Every Weekday"]
 RECURRENCE_DEFAULT = "Weekly"
 
-# Defaults every field resets to after a submit (see events.py) and what brand-new entities
-# start at - 9:00 AM / 10:00 AM so a freshly-opened popup already shows a self-consistent,
-# one-hour-apart pair with no interaction needed, matching what the recompute below would
-# produce anyway from those exact starting values.
-DEFAULT_START_HOUR = 9
-DEFAULT_END_HOUR = 10
-DEFAULT_MINUTE = 0
-DEFAULT_AMPM = "AM"
-
 _COMPONENT_MAP = {
     "date": date_component.DATA_COMPONENT,
-    "number": number_component.DATA_COMPONENT,
-    "select": select_component.DATA_COMPONENT,
+    "datetime": datetime_component.DATA_COMPONENT,
 }
 
 
@@ -94,66 +82,28 @@ def _sibling_entity(hass: HomeAssistant, entry: ConfigEntry, domain: str, unique
     return component.get_entity(entity_id) if component else None
 
 
-def _to_24_hour(hour12: int, ampm: str) -> int:
-    hour12 = int(hour12) % 12  # 12 AM/PM -> 0
-    return hour12 + (12 if ampm == "PM" else 0)
+async def async_recompute_end_datetime_from_start(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Read Start's `datetime`; if set, default End to Start plus one hour. Called by Start's
+    own entity after every set - see this module's docstring for why this is an unconditional
+    overwrite. Start's own value is trusted as-is (already a correct, fully-resolved absolute
+    time regardless of the viewer's 12-vs-24-hour display - see this module's docstring)."""
+    start_entity = _sibling_entity(hass, entry, "datetime", EVENT_START_UNIQUE_ID)
+    if start_entity is None or start_entity.native_value is None:
+        return
+
+    end_entity = _sibling_entity(hass, entry, "datetime", EVENT_END_UNIQUE_ID)
+    if end_entity is not None:
+        await end_entity.async_set_value(start_entity.native_value + timedelta(hours=1))
 
 
-def _to_12_hour(hour24: int) -> tuple[int, str]:
-    ampm = "PM" if hour24 >= 12 else "AM"
-    hour12 = hour24 % 12
-    return (hour12 or 12), ampm
-
-
-def compose_datetime(date_value: date_type, hour12: float, minute: float, ampm: str) -> datetime:
-    """Combine a Date + Hour(1-12) + Minute + AM/PM field group into a real, timezone-AWARE
-    `datetime` (HA's configured local zone) - required now that `events.py` calls the target
-    calendar entity's `async_create_event` directly instead of through the `calendar.
-    create_event` SERVICE, which normally does this localization step itself before the
-    entity ever sees the value (live-verified: a naive datetime passed directly raises
-    `Failed to validate CalendarEvent: Expected all values to have a timezone`).
-    `dt_util.as_local` on an already-naive value attaches the local zone directly rather than
-    treating it as UTC-and-converting - exactly "this wall-clock time IS local time", which is
-    what a Date+Hour+Minute+AM-PM group means."""
-    naive = datetime.combine(date_value, time(hour=_to_24_hour(hour12, ampm), minute=int(minute)))
-    return dt_util.as_local(naive)
-
-
-def _decompose_datetime(value: datetime) -> tuple[date_type, int, int, str]:
-    hour12, ampm = _to_12_hour(value.hour)
-    return value.date(), hour12, value.minute, ampm
-
-
-async def async_recompute_end_from_start(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Read Start's Date/Hour/Minute/AM-PM; if Start Date is set, write End's own four fields
-    to Start plus one hour. Called by each of Start's 4 field entities after their own value
-    changes - see this module's docstring for why this is an unconditional overwrite."""
+async def async_recompute_end_date_from_start_date(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """All-day-only cascade: if Start Date is set, default End Date to the same day. Called by
+    Start Date's own entity after every set (`date.py`) - the user's own subsequent End Date
+    edit is the last word until Start Date changes again, same convention as the timed-event
+    cascade above."""
     start_date_entity = _sibling_entity(hass, entry, "date", EVENT_START_DATE_UNIQUE_ID)
-    start_hour_entity = _sibling_entity(hass, entry, "number", EVENT_START_HOUR_UNIQUE_ID)
-    start_minute_entity = _sibling_entity(hass, entry, "number", EVENT_START_MINUTE_UNIQUE_ID)
-    start_ampm_entity = _sibling_entity(hass, entry, "select", EVENT_START_AMPM_UNIQUE_ID)
     if start_date_entity is None or start_date_entity.native_value is None:
         return
-    if start_hour_entity is None or start_minute_entity is None or start_ampm_entity is None:
-        return
-
-    start_dt = compose_datetime(
-        start_date_entity.native_value,
-        start_hour_entity.native_value,
-        start_minute_entity.native_value,
-        start_ampm_entity.current_option,
-    )
-    end_date, end_hour, end_minute, end_ampm = _decompose_datetime(start_dt + timedelta(hours=1))
-
     end_date_entity = _sibling_entity(hass, entry, "date", EVENT_END_DATE_UNIQUE_ID)
-    end_hour_entity = _sibling_entity(hass, entry, "number", EVENT_END_HOUR_UNIQUE_ID)
-    end_minute_entity = _sibling_entity(hass, entry, "number", EVENT_END_MINUTE_UNIQUE_ID)
-    end_ampm_entity = _sibling_entity(hass, entry, "select", EVENT_END_AMPM_UNIQUE_ID)
     if end_date_entity is not None:
-        await end_date_entity.async_set_value(end_date)
-    if end_hour_entity is not None:
-        await end_hour_entity.async_set_native_value(end_hour)
-    if end_minute_entity is not None:
-        await end_minute_entity.async_set_native_value(end_minute)
-    if end_ampm_entity is not None:
-        await end_ampm_entity.async_select_option(end_ampm)
+        await end_date_entity.async_set_value(start_date_entity.native_value)

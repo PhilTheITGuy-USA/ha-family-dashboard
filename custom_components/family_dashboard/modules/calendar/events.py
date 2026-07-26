@@ -1,6 +1,6 @@
 """Add Event popup's submit logic - reads every scratch field (title/description, all-day
-flag, Start/End Date+Hour+Minute+AM-PM, weeks/days/hours/minutes-before reminder fields,
-Recurring flag + Recurrence preset, target calendar), calls the target calendar entity's
+flag, Start/End Date-or-datetime, weeks/days/hours/minutes-before reminder fields, Recurring
+flag + Recurrence preset, target calendar), calls the target calendar entity's
 `async_create_event` DIRECTLY (see below for why, not via the `calendar.create_event`
 service), appends `[[reminder:...]]` tag(s) for whichever lead-time fields were non-zero,
 then clears every scratch field - mirroring the legacy `add_calendar_event` script's own
@@ -22,6 +22,14 @@ handler's own `CalendarEntityFeature.CREATE_EVENT` support check ourselves, so a
 incompatible calendar backend still fails with a friendly `HomeAssistantError` instead of a
 raw `NotImplementedError`.
 
+2026-07-26: the timed-event branch reads `datetime.py`'s combined Start/End field's own
+`native_value` directly, with no further correction - see `event_time.py`'s docstring for why
+an earlier same-day version's separate AM/PM "correction" select was removed (live-verified
+against HA's own frontend source that the native picker already resolves to a correct,
+unambiguous absolute time regardless of the viewer's 12-vs-24-hour account setting).
+`datetime.py` already localizes the value the moment it's stored, so it's ready to pass
+straight through to `async_create_event`.
+
 The `family_dashboard.add_event` service is registered on `FamilyDashboardEventCalendarSelect`
 (see `select.py`) since that entity already represents "which calendar" - this module holds
 the actual cross-entity logic so that class stays a plain entity, not a grab-bag.
@@ -30,6 +38,7 @@ from __future__ import annotations
 
 import homeassistant.components.calendar as calendar_component
 import homeassistant.components.date as date_component
+import homeassistant.components.datetime as datetime_component
 import homeassistant.components.number as number_component
 import homeassistant.components.select as select_component
 import homeassistant.components.switch as switch_component
@@ -42,20 +51,12 @@ from homeassistant.helpers import entity_registry as er
 from ...const import CONF_CALENDAR_ENTITY_ID, CONF_ROSTER, DOMAIN
 from .dashboard import _family_calendar_entity
 from .event_time import (
-    DEFAULT_END_HOUR,
-    DEFAULT_MINUTE,
-    DEFAULT_START_HOUR,
-    EVENT_END_AMPM_UNIQUE_ID,
     EVENT_END_DATE_UNIQUE_ID,
-    EVENT_END_HOUR_UNIQUE_ID,
-    EVENT_END_MINUTE_UNIQUE_ID,
+    EVENT_END_UNIQUE_ID,
     EVENT_RECURRENCE_UNIQUE_ID,
     EVENT_RECURRING_UNIQUE_ID,
-    EVENT_START_AMPM_UNIQUE_ID,
     EVENT_START_DATE_UNIQUE_ID,
-    EVENT_START_HOUR_UNIQUE_ID,
-    EVENT_START_MINUTE_UNIQUE_ID,
-    compose_datetime,
+    EVENT_START_UNIQUE_ID,
 )
 from .number import (
     EVENT_REMIND_DAYS_UNIQUE_ID,
@@ -88,6 +89,7 @@ def _entity(hass: HomeAssistant, domain: str, unique_id_suffix: str, entry: Conf
         "text": text_component.DATA_COMPONENT,
         "switch": switch_component.DATA_COMPONENT,
         "date": date_component.DATA_COMPONENT,
+        "datetime": datetime_component.DATA_COMPONENT,
         "number": number_component.DATA_COMPONENT,
         "select": select_component.DATA_COMPONENT,
     }
@@ -169,12 +171,8 @@ async def async_create_event_from_scratch_fields(
 
     start_date_entity = _entity(hass, "date", EVENT_START_DATE_UNIQUE_ID, entry)
     end_date_entity = _entity(hass, "date", EVENT_END_DATE_UNIQUE_ID, entry)
-    start_hour_entity = _entity(hass, "number", EVENT_START_HOUR_UNIQUE_ID, entry)
-    start_minute_entity = _entity(hass, "number", EVENT_START_MINUTE_UNIQUE_ID, entry)
-    start_ampm_entity = _entity(hass, "select", EVENT_START_AMPM_UNIQUE_ID, entry)
-    end_hour_entity = _entity(hass, "number", EVENT_END_HOUR_UNIQUE_ID, entry)
-    end_minute_entity = _entity(hass, "number", EVENT_END_MINUTE_UNIQUE_ID, entry)
-    end_ampm_entity = _entity(hass, "select", EVENT_END_AMPM_UNIQUE_ID, entry)
+    start_entity = _entity(hass, "datetime", EVENT_START_UNIQUE_ID, entry)
+    end_entity = _entity(hass, "datetime", EVENT_END_UNIQUE_ID, entry)
 
     if all_day:
         if not start_date_entity or not end_date_entity or not start_date_entity.native_value or not end_date_entity.native_value:
@@ -182,20 +180,10 @@ async def async_create_event_from_scratch_fields(
         create_kwargs["dtstart"] = start_date_entity.native_value
         create_kwargs["dtend"] = end_date_entity.native_value
     else:
-        required = (
-            start_date_entity, start_hour_entity, start_minute_entity, start_ampm_entity,
-            end_date_entity, end_hour_entity, end_minute_entity, end_ampm_entity,
-        )
-        if any(e is None for e in required) or not start_date_entity.native_value or not end_date_entity.native_value:
+        if not start_entity or not end_entity or not start_entity.native_value or not end_entity.native_value:
             raise HomeAssistantError("Event start/end time is required")
-        create_kwargs["dtstart"] = compose_datetime(
-            start_date_entity.native_value, start_hour_entity.native_value,
-            start_minute_entity.native_value, start_ampm_entity.current_option,
-        )
-        create_kwargs["dtend"] = compose_datetime(
-            end_date_entity.native_value, end_hour_entity.native_value,
-            end_minute_entity.native_value, end_ampm_entity.current_option,
-        )
+        create_kwargs["dtstart"] = start_entity.native_value
+        create_kwargs["dtend"] = end_entity.native_value
 
     await calendar_entity.async_create_event(**create_kwargs)
 
@@ -210,15 +198,7 @@ async def async_create_event_from_scratch_fields(
             await number_entity.async_set_native_value(0)
     if recurring_entity:
         await recurring_entity.async_turn_off()
-    if start_hour_entity:
-        await start_hour_entity.async_set_native_value(DEFAULT_START_HOUR)
-    if start_minute_entity:
-        await start_minute_entity.async_set_native_value(DEFAULT_MINUTE)
-    if start_ampm_entity:
-        await start_ampm_entity.async_select_option("AM")
-    if end_hour_entity:
-        await end_hour_entity.async_set_native_value(DEFAULT_END_HOUR)
-    if end_minute_entity:
-        await end_minute_entity.async_set_native_value(DEFAULT_MINUTE)
-    if end_ampm_entity:
-        await end_ampm_entity.async_select_option("AM")
+    if start_entity:
+        await start_entity.async_set_value(None)
+    if end_entity:
+        await end_entity.async_set_value(None)

@@ -59,18 +59,21 @@ the 2026-07-18 Family calendar redesign):
   genuinely blank placeholder cells.
 - The Add Event popup (`async_add_event_popup_card`/`async_add_event_button`) - a
   `custom:bubble-card` pop-up with the scratch fields from `text.py`/`switch.py`/`date.py`/
-  `number.py`/`select.py`, submitting via the `family_dashboard.add_event` service (see
-  `events.py`). Reminders are four independent weeks/days/hours/minutes-before `number` fields
-  (`number.py`, replacing 2026-07-25's fixed 1-week/1-day/1-hour checkboxes - a live request
-  for a configurable lead time instead of a static one). Start/End time-of-day is a Date +
-  Hour(1-12) + Minute + AM/PM group per side (2026-07-25, replacing a single combined
-  `datetime` field per side - see `event_time.py`'s docstring for why a shared kiosk can't
-  rely on HA's native datetime picker's per-viewer-account AM/PM setting), and Start's own 4
-  fields auto-default End's to itself plus one hour on every set (`event_time.py`'s
-  `async_recompute_end_from_start`). Recurring is a switch + conditional Recurrence-preset
-  select, same shape as All Day Event (`switch.py`/`select.py`) - see `events.py` for how a
-  preset becomes an RFC5545 `rrule` passed directly to the target calendar entity (bypassing
-  the `calendar.create_event` SERVICE, which has no recurrence support at all).
+  `datetime.py`/`number.py`/`select.py`, submitting via the `family_dashboard.add_event`
+  service (see `events.py`). Reminders are four independent weeks/days/hours/minutes-before
+  `number` fields (`number.py`, replacing 2026-07-25's fixed 1-week/1-day/1-hour checkboxes -
+  a live request for a configurable lead time instead of a static one). Start/End time-of-day
+  is a single combined `datetime` field per side (2026-07-26, reverting 2026-07-25's
+  decomposed Date+Hour(1-12)+Minute+AM/PM group - a live report called that "far too many
+  clicks and opens sub windows" - back to v0.9.0-beta.4's compact layout; see
+  `event_time.py`'s docstring for why no separate AM/PM control is needed - the native
+  picker already resolves an unambiguous absolute time regardless of the viewer's 12-vs-24-
+  hour account setting), and Start's own `datetime` auto-defaults End's to itself plus one
+  hour on every set (`event_time.py`'s `async_recompute_end_datetime_from_start`). Recurring
+  is a switch + conditional Recurrence-preset select, same shape as All Day Event
+  (`switch.py`/`select.py`) - see `events.py` for how a preset becomes an RFC5545 `rrule`
+  passed directly to the target calendar entity (bypassing the `calendar.create_event`
+  SERVICE, which has no recurrence support at all).
 
 card_mod styling adapted from the legacy file's proven week-planner-card block, with the
 'Ovo' theme font reference dropped from THIS specific block (the theme now provides it
@@ -638,13 +641,19 @@ def async_add_event_popup_card() -> dict:
     structure (plain entities card + all-day/timed conditional cards + submit button) onto
     this integration's own owned scratch entities instead of `input_*` helpers.
 
-    2026-07-25: Start/End Date is now ONE shared row (used by both all-day and timed events -
-    only the time-of-day portion differs), with the Hour/Minute/AM-PM row conditional on All
-    Day being off - replacing the old combined `datetime` fields entirely (see
-    `event_time.py`'s docstring for why: HA's native datetime picker's 12-vs-24-hour display
-    depends on each VIEWER's own account settings, unusable for a shared kiosk). Recurring
-    follows the exact same "switch + conditional card" shape as All Day Event (a live
-    request), revealing the Recurrence preset picker only when on.
+    2026-07-26: Start/End is back to v0.9.0-beta.4's layout - a single combined `datetime`
+    row per side (native HA date+time more-info picker, one tap sets both), conditional on
+    All Day being off; Start/End Date is its own separate conditional block (all-day only)
+    rather than a row shared between both branches. This reverts the 2026-07-25 decomposed
+    Date+Hour+Minute+AM-PM redesign - a live report called that "far too many clicks and
+    opens sub windows to enter hour, days, etc". A same-day intermediate version added a
+    separate explicit AM/PM select per side to "correct" the native picker's stored value -
+    removed a few hours later once live-verified (against HA's own frontend source) that the
+    native picker already resolves to a correct, unambiguous absolute time regardless of the
+    viewer's 12-vs-24-hour account setting, making that select pure redundant duplication; see
+    `event_time.py`'s docstring for the full reasoning. Recurring follows the exact same
+    "switch + conditional card" shape as All Day Event (a live request), revealing the
+    Recurrence preset picker only when on.
     """
     return {
         "type": "custom:bubble-card",
@@ -666,24 +675,24 @@ def async_add_event_popup_card() -> dict:
                 "show_header_toggle": False,
             },
             {
-                "type": "entities",
-                "entities": [
-                    {"entity": "date.family_dashboard_event_start_date", "name": "Start Date"},
-                    {"entity": "date.family_dashboard_event_end_date", "name": "End Date"},
-                ],
-            },
-            {
                 "type": "conditional",
                 "conditions": [{"entity": "switch.family_dashboard_event_all_day", "state": "off"}],
                 "card": {
                     "type": "entities",
                     "entities": [
-                        {"entity": "number.family_dashboard_event_start_hour", "name": "Start Hour"},
-                        {"entity": "number.family_dashboard_event_start_minute", "name": "Start Minute"},
-                        {"entity": "select.family_dashboard_event_start_ampm", "name": "Start AM/PM"},
-                        {"entity": "number.family_dashboard_event_end_hour", "name": "End Hour"},
-                        {"entity": "number.family_dashboard_event_end_minute", "name": "End Minute"},
-                        {"entity": "select.family_dashboard_event_end_ampm", "name": "End AM/PM"},
+                        {"entity": "datetime.family_dashboard_event_start", "name": "Start"},
+                        {"entity": "datetime.family_dashboard_event_end", "name": "End"},
+                    ],
+                },
+            },
+            {
+                "type": "conditional",
+                "conditions": [{"entity": "switch.family_dashboard_event_all_day", "state": "on"}],
+                "card": {
+                    "type": "entities",
+                    "entities": [
+                        {"entity": "date.family_dashboard_event_start_date", "name": "Start Date"},
+                        {"entity": "date.family_dashboard_event_end_date", "name": "End Date"},
                     ],
                 },
             },

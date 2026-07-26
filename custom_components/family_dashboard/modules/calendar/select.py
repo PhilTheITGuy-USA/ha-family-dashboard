@@ -1,13 +1,16 @@
 """Household-scoped `select` entities for Calendar:
 
 - The Add Event popup's target-calendar picker.
-- Start/End AM-PM fields - the fourth of each side's Date+Hour+Minute+AM-PM group (`date.py`/
-  `number.py` own the other three) - see `event_time.py`'s docstring for why this replaced a
-  single combined `datetime` entity per side. Start's own AM/PM field triggers
-  `event_time.async_recompute_end_from_start` on every set, same as Start's other 3 fields.
 - The Recurrence preset picker (Daily/Weekly/Monthly/Annually/Every Weekday) - read at submit
   time only when the Recurring switch (`switch.py`) is on; see `events.py` for how a preset
   becomes an RFC5545 `rrule` string.
+
+A separate explicit Start/End AM-PM select briefly lived here too (2026-07-26) alongside
+`datetime.py`'s combined Start/End field - removed the same day, a live-verified non-issue:
+HA's native `datetime` picker already resolves to a correct, unambiguous absolute time
+regardless of the viewer's 12-vs-24-hour account setting (see `event_time.py`'s docstring for
+the full reasoning), so the bolt-on select only duplicated a question the native row already
+answers in the same tap.
 
 All single, config-entry-scoped entities (not per-member) - forwarded once if any roster
 member has "calendar" enabled, same as the other calendar scratch/display platforms (see
@@ -28,15 +31,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from ...const import CONF_CALENDAR_ENTITY_ID, CONF_ROSTER, DOMAIN
 from .dashboard import _family_calendar_entity
-from .event_time import (
-    DEFAULT_AMPM,
-    EVENT_END_AMPM_UNIQUE_ID,
-    EVENT_RECURRENCE_UNIQUE_ID,
-    EVENT_START_AMPM_UNIQUE_ID,
-    RECURRENCE_DEFAULT,
-    RECURRENCE_OPTIONS,
-    async_recompute_end_from_start,
-)
+from .event_time import EVENT_RECURRENCE_UNIQUE_ID, RECURRENCE_DEFAULT, RECURRENCE_OPTIONS
 from .events import async_create_event_from_scratch_fields
 
 
@@ -56,8 +51,6 @@ async def async_setup_entry(
     async_add_entities(
         [
             FamilyDashboardEventCalendarSelect(hass, entry),
-            _EventStartAmPmSelect(entry, EVENT_START_AMPM_UNIQUE_ID, "Event Start AM/PM"),
-            _EventAmPmSelect(entry, EVENT_END_AMPM_UNIQUE_ID, "Event End AM/PM"),
             _EventRecurrenceSelect(entry),
         ]
     )
@@ -112,44 +105,6 @@ class FamilyDashboardEventCalendarSelect(SelectEntity, RestoreEntity):
         """The Add Event popup's submit action - see events.py's module docstring for the
         full field-reading/create_event/reminder-tag/reset logic this delegates to."""
         await async_create_event_from_scratch_fields(self.hass, self._entry, self.current_option)
-
-
-class _EventAmPmSelect(SelectEntity):
-    """One side's AM/PM field - see `event_time.py`'s docstring for the whole
-    Date+Hour+Minute+AM-PM group this belongs to."""
-
-    _attr_has_entity_name = True
-    _attr_icon = "mdi:calendar-clock"
-    _attr_options = ["AM", "PM"]
-    _attr_should_poll = False
-
-    def __init__(self, entry: ConfigEntry, unique_id_suffix: str, name: str) -> None:
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_{unique_id_suffix}"
-        self._attr_name = name
-        self._attr_current_option = DEFAULT_AMPM
-        _pin_entity_id(self, unique_id_suffix)
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Family Dashboard",
-            manufacturer="Family Dashboard",
-        )
-
-    async def async_select_option(self, option: str) -> None:
-        self._attr_current_option = option
-        self.async_write_ha_state()
-
-
-class _EventStartAmPmSelect(_EventAmPmSelect):
-    """Start's AM/PM field - see `event_time.async_recompute_end_from_start` for what happens
-    on every set."""
-
-    async def async_select_option(self, option: str) -> None:
-        await super().async_select_option(option)
-        await async_recompute_end_from_start(self.hass, self._entry)
 
 
 class _EventRecurrenceSelect(SelectEntity):
