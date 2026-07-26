@@ -54,8 +54,6 @@ from homeassistant.components.lovelace import resources as lovelace_resources
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from ..assets import VENDOR_RESOURCE_URLS
-
 DASHBOARD_URL_PATH = "family-dashboard"
 DASHBOARD_TITLE = "Family Dashboard"
 DASHBOARD_ICON = "mdi:home-heart"
@@ -147,17 +145,26 @@ async def async_register_dashboard(
 
 
 async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
-    """Registers `family-dashboard-strategy.js` PLUS every vendored third-party card
-    (`assets.VENDOR_RESOURCE_URLS` - button-card/bubble-card/config-template-card/
-    week-planner-card, seeded to `/config/www/family_dashboard/` by `assets.py`, same "ship it
-    with the integration, copy on first run" pattern as the theme/background/avatars) as
-    Lovelace resources, so the frontend actually loads them and each one's `customElements.define(...)`
-    runs before any generated card config tries to resolve that `custom:...` tag. Without this,
-    the generated dashboard's card configs (every module's `dashboard.py` uses one or more of
-    these) show "Configuration error" for every affected card - live-verified via a genuinely
-    fresh install, not assumed: bundling the JS alone isn't enough, HA only loads a `custom:`
-    element if its script is ALSO a registered Lovelace resource, exactly like the strategy
-    script itself already needed.
+    """Registers `family-dashboard-strategy.js` (seeded to `/config/www/family_dashboard/` by
+    `assets.py`) as a Lovelace resource, so the frontend actually loads it and
+    `customElements.define(...)` runs before any generated dashboard config tries to resolve
+    the `custom:family-dashboard` strategy tag. Without this, the dashboard shows a
+    "Configuration error" - live-verified via a genuinely fresh install, not assumed: bundling
+    the JS alone isn't enough, HA only loads a `custom:` element if its script is ALSO a
+    registered Lovelace resource.
+
+    2026-07-26: this used to ALSO register five vendored third-party cards (button-card,
+    bubble-card, card-mod, config-template-card, week-planner-card) here - removed along with
+    `assets.py`'s own vendoring of them (see that module's docstring for why: none of the five
+    guard their own `customElements.define(...)` against a user's own separately-HACS-installed
+    copy of the same card already being registered, and this integration can't detect or
+    prevent that collision from here). Every module's `dashboard.py` still generates card
+    configs referencing these five (`custom:button-card` etc.) exactly as before - only WHERE
+    the actual JS comes from changed, from "bundled here" to "the user's own required HACS
+    install", per SETUP.md's Prerequisites section. If any of the five aren't actually
+    installed, the affected cards show the same "Configuration error" this function's own
+    docstring describes for the strategy script - not something this function can detect,
+    since it only knows about ITS OWN resource, not what a user may have registered elsewhere.
 
     Uses `_resources_collection` (the REAL, live collection - see its own docstring for why a
     second instance doesn't work here, unlike `async_register_dashboard`'s dashboard
@@ -173,7 +180,6 @@ async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
     # guarantee rather than assuming that ordering always holds.
     await collection.async_get_info()
     existing_urls = {item["url"] for item in collection.async_items()}
-    for url in [STRATEGY_RESOURCE_URL, *VENDOR_RESOURCE_URLS]:
-        if url not in existing_urls:
-            await collection.async_create_item({"res_type": "module", "url": url})
+    if STRATEGY_RESOURCE_URL not in existing_urls:
+        await collection.async_create_item({"res_type": "module", "url": STRATEGY_RESOURCE_URL})
     return True

@@ -24,6 +24,25 @@ many files get seeded, until a manual restart - exactly the "silently needs a re
 mode this whole project was rebuilt to avoid. `_ensure_local_static_path` below registers our
 own dedicated static path directly instead of relying on that boot-time check, so assets are
 servable immediately regardless of whether `www/` existed before HA started.
+
+2026-07-26: this module used to ALSO vendor five third-party Lovelace cards (button-card,
+bubble-card, card-mod, config-template-card, week-planner-card) here and in
+`dashboard/register.py`'s resource registration, on the reasoning that bundling them avoided
+requiring a separate manual HACS install. Reversed on a live-reported real risk: none of the
+five vendored files guard their own `customElements.define(...)` call with an existence check
+first (confirmed by reading each one directly) - a user who ALREADY has any of these five
+installed separately (for their own other dashboards) would end up with both copies loaded
+globally, racing to define the same custom element name, with the loser throwing an uncaught
+console error and silently never taking effect. For `week-planner-card` specifically, this
+integration's own calendar behavior is documented as depending on the *exact* pinned version's
+internals - a user's own differently-versioned copy silently winning that race could break the
+calendar in a way that has nothing to do with this integration's own code. Vendoring can't
+detect or prevent that collision from our side without either modifying the third-party files
+(renaming their registered tag - a real, ongoing-maintenance modification to code this project
+otherwise ships unmodified) or accepting the risk. SETUP.md's Prerequisites section now lists
+all five as required manual HACS installs instead - see `dashboard/register.py`'s
+`async_register_strategy_resource` for what's still auto-registered (just this integration's
+own strategy script).
 """
 from __future__ import annotations
 
@@ -37,18 +56,6 @@ from .const import DOMAIN
 
 _PACKAGE_DIR = Path(__file__).parent
 _STATIC_PATH_REGISTERED_KEY = f"{DOMAIN}_local_static_path_registered"
-
-# Vendored third-party Lovelace cards the generated dashboard's card configs depend on (see
-# `www/vendor/ATTRIBUTIONS.md` for source/version/license) - bundled directly rather than
-# requiring a separate manual HACS install, same "ship it, no manual step" reasoning as the
-# theme/avatars/strategy JS above. `dashboard/register.py`'s `async_register_strategy_resource`
-# imports this list to register each as a Lovelace resource alongside our own strategy script.
-VENDOR_RESOURCE_URLS = [
-    "/local/family_dashboard/vendor/button-card.js",
-    "/local/family_dashboard/vendor/bubble-card.js",
-    "/local/family_dashboard/vendor/config-template-card.js",
-    "/local/family_dashboard/vendor/week-planner-card.js",
-]
 
 
 async def _ensure_local_static_path(hass: HomeAssistant, target_dir: Path) -> None:
@@ -97,17 +104,6 @@ def _seed_sync(hass: HomeAssistant) -> list[str]:
     if strategy_src.is_file():
         strategy_dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(strategy_src, strategy_dest)
-
-    # Vendored third-party cards - same "always re-copy, integration-owned" treatment as the
-    # strategy JS above (a shipped version bump should take effect on next restart, not be
-    # silently stuck on whatever copy happened to exist already).
-    vendor_dest_dir = config_dir / "www" / "family_dashboard" / "vendor"
-    vendor_src_dir = _PACKAGE_DIR / "www" / "vendor"
-    if vendor_src_dir.is_dir():
-        vendor_dest_dir.mkdir(parents=True, exist_ok=True)
-        for src in vendor_src_dir.iterdir():
-            if src.is_file():
-                shutil.copyfile(src, vendor_dest_dir / src.name)
 
     return [f"/local/family_dashboard/avatars/{f.name}" for f in sorted(avatars_dest.glob("*.png"))]
 

@@ -30,6 +30,35 @@ Family Dashboard is a custom Home Assistant integration that replaces the older 
 - Version 2024.8 or later recommended (`action:` syntax required)
 - HACS installed — see [hacs.xyz](https://hacs.xyz) if not already set up
 
+### Required Lovelace cards (install via HACS before adding the integration)
+
+The generated dashboard depends on five third-party Lovelace cards. Install **all five** via
+HACS (Frontend category) and confirm each is active in **Settings → Dashboards → Resources**
+before adding the Family Dashboard integration — the wizard does not install these for you,
+and the dashboard will show "Configuration error" on any card whose underlying card is
+missing.
+
+| Card | Repository | Version tested against |
+|---|---|---|
+| button-card | [custom-cards/button-card](https://github.com/custom-cards/button-card) | v7.0.1 |
+| Bubble Card | [Clooos/Bubble-Card](https://github.com/Clooos/Bubble-Card) | v3.2.5 |
+| card-mod | [thomasloven/lovelace-card-mod](https://github.com/thomasloven/lovelace-card-mod) | v4.2.1 |
+| config-template-card | [iantrich/config-template-card](https://github.com/iantrich/config-template-card) | v1.3.6 |
+| week-planner-card | [FamousWolf/week-planner-card](https://github.com/FamousWolf/week-planner-card) | v1.14.1 |
+
+> ⚠️ **week-planner-card version matters.** The Calendar tab's per-person/Family/Birthdays/
+> Holidays show-hide toggles depend on this card's exact filter-matching behavior as of
+> v1.14.1. A different installed version may filter events backwards (toggle "on" hides
+> instead of shows) or render the month grid differently. If your calendar toggles seem
+> inverted or the grid looks wrong, check the installed version first.
+>
+> **Already have one of these for your own other dashboards?** Do not install a second copy.
+> Two copies of the same card both try to register the identical component name in your
+> browser, and only one wins — unpredictably, depending on load order — while the other
+> silently fails with a console error. Keep whatever version you already have; if the
+> Calendar tab behaves oddly, update your existing install to match the versions above rather
+> than adding a duplicate.
+
 ### Before running the wizard
 - At least one calendar integration connected and producing a `calendar.*` entity (Google Calendar, CalDAV, iCloud, etc.)
 - One HA user account per family member who will have their own view (optional but recommended — the Kiosk user sees everyone regardless)
@@ -225,6 +254,7 @@ Family Dashboard is feature-complete against the v1 plan and live-validated end-
 - **Meals module:** Intentionally deferred — the feature registry is shaped for it but no UI or entities are created yet.
 - **Holiday regions:** Non-US / non-Philippines regions require manually adding a holiday calendar in HA and mapping it via Reconfigure.
 - **Shared Family calendar not appearing:** Detection requires a `calendar.*` entity named exactly "Family" — if your provider names the entity something else (e.g. after the connected account rather than the calendar's own title), rename it in **Settings → Devices & Services → Entities**, then Reload the Family Dashboard integration. A blank "Name" field on that entity means it's using the provider's default name, not that naming doesn't matter — check the actual `friendly_name` in Developer Tools → States if unsure.
+- **The five Lovelace cards are a manual prerequisite, not bundled:** earlier beta versions bundled these five cards directly so no separate HACS install was needed. Reversed as of this note: none of the five guard against a duplicate registration, so a user who already had any of them installed for their own other dashboards could end up with two competing copies racing to register the same component - unpredictable, and for week-planner-card specifically, capable of silently breaking the Calendar tab's toggle behavior if a different version won that race. See the Prerequisites section above.
 
 Report issues at: [github.com/PhilTheITGuy-USA/ha-family-dashboard/issues](https://github.com/PhilTheITGuy-USA/ha-family-dashboard/issues)
 
