@@ -13,8 +13,8 @@ reasoning behind the rebuild.
 ## Why a rebuild
 
 `ha-family-hub-setup` promised "one wizard, done" but wrote static YAML package files and
-hoped the user's `configuration.yaml` already included them and that HA got restarted -
-neither was true on a real install, so nothing appeared. Family Dashboard fixes this
+required the user to manually update `configuration.yaml` with contnet from Family Hub and then HA got restarted -
+neither was true on a real install.  Family Dashboard fixes this
 architecturally: every entity is created live, owned directly by this integration - no YAML,
 no restart dependency.
 
