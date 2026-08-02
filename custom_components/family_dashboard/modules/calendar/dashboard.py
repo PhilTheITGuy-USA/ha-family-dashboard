@@ -78,6 +78,21 @@ the 2026-07-18 Family calendar redesign):
 card_mod styling adapted from the legacy file's proven week-planner-card block, with the
 'Ovo' theme font reference dropped from THIS specific block (the theme now provides it
 globally instead - see `themes/family_dashboard.yaml`/`assets.py`).
+
+2026-08-02, kiosk-fit experiment (EXPERIMENTAL, not yet live-tuned - a live user request to
+guarantee the whole dashboard, tabs/chips/calendar included, never overspills a 1920x1080
+kiosk viewport, with bigger/more-legible title-only day cells): day cells now show ONLY the
+event title (`showLocation`/`showDescription` off, `.time` CSS-hidden - see
+`_WEEK_PLANNER_STATIC_OPTIONS`/`_CARD_MOD_STYLE`); everything else (time, location,
+description) is reached via week-planner-card's own pre-existing tap-to-open event-details
+dialog (`_handleEventClick` in the card's own source - not something this integration added,
+just newly relied on now that the grid itself stopped showing it inline). The calendar card's
+own box is now a hard `calc(100vh - 240px)` (both `height` and `max-height`, replacing the
+previous grow-to-fit `min-height` clamp) with `overflow-y: auto` as a safety net, plus
+`maxDayEvents: 3` capping how many events one day can render before falling back to a static
+"+N more" label (not clickable) - both the `240px` reservation and the `3`-event cap are
+guesses pending live verification against the real kiosk display's actual nav/controls-row
+heights and typical event density, not measured values.
 """
 from __future__ import annotations
 
@@ -115,17 +130,33 @@ def _member_has_calendar(member: dict) -> bool:
 _CARD_MOD_STYLE = (
     "ha-card { background: rgba(255,255,255,0.85) !important; border-radius: 24px "
     "!important; box-shadow: none !important; "
-    # `height`/`max-height` (both the same fixed `clamp(...)`) used to hard-cap the card's
-    # own height - live-reported real bug: a full always-shown month grid (`days: "month"`,
-    # this module's docstring) needs 4-6 rows depending on the month/starting weekday, and a
-    # fixed cap tuned for less content clipped the LAST row's background off entirely - it
-    # rendered visibly outside the card, floating on the view's own page background instead
-    # (uneven-looking row spacing was a symptom of the same cause, not a separate bug). A
-    # `min-height` alone still gives short content the same tall kiosk-appropriate card this
-    # was meant to guarantee, but lets it grow to whatever the current month actually needs
-    # rather than clipping. `height: auto` overrides week-planner-card's own default height
-    # rule, which would otherwise still apply.
-    "min-height: clamp(420px,64vh,860px) !important; height: auto !important; "
+    # 2026-08-02, kiosk-fit experiment (EXPERIMENTAL - needs live tuning, not a final value):
+    # previously `height: auto` + a `min-height` clamp let the card grow to whatever the
+    # current month's row count actually needed, specifically to avoid an earlier fixed-height
+    # bug where overflowing content rendered its last row's background outside the card
+    # entirely. That traded "never clips" for "can overspill the 1920x1080 kiosk viewport
+    # below the nav/controls rows" - now doing the reverse: a hard `calc(100vh - Npx)` box
+    # (both height and max-height, so it can't grow) with `overflow-y: auto` as the safety net
+    # that reproduces the OLD fix's non-clipping property (a scrollbar instead of content
+    # bleeding past the card's own rounded background) if content still doesn't fit. The `Npx`
+    # reservation below is a rough guess at the fixed Kiosk hub-nav-row (52px) + controls-row
+    # (52px) + inter-card/view gaps - it is NOT pixel-verified against the real kiosk display
+    # yet and should be the first thing tuned once viewed live; see also `maxDayEvents` in
+    # `_WEEK_PLANNER_STATIC_OPTIONS`, which caps events-per-day so a single busy day can't
+    # blow out one row's height regardless of this container's own sizing.
+    "height: calc(100vh - 240px) !important; max-height: calc(100vh - 240px) !important; "
+    "min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; "
+    # Live-measured via getComputedStyle (not eyeballed off a screenshot): `.event .inner`'s
+    # padding reads `var(--event-padding)`, which week-planner-card's OWN CSS only shrinks
+    # from its spacious 10px-all-sides default to a compact `2px 5px` inside a container query
+    # keyed on ITS OWN rendered width - this card's actual width on a 1920px kiosk view never
+    # crosses that threshold, so the spacious default was silently what applied, not a bug in
+    # our own `.event`/`.title` rules (title itself measured exactly as expected). Overridden
+    # directly as a custom property here instead of guessing the container-query threshold -
+    # custom properties cascade through the shadow root the same as any inherited CSS value,
+    # so this reaches `.event .inner` (and the "+N more"/"no events" labels, which read the
+    # same variable) without needing card_mod to know their internal implementation at all.
+    "--event-padding: 2px 6px !important; --event-spacing: 3px !important; "
     "color: #2b2b2b !important; "
     # Live-verified real gap (2026-07-25): week-planner-card's own internal CSS never
     # references any HA theme variable for its text, so the "Family Dashboard" theme's 'Ovo'
@@ -162,11 +193,50 @@ _CARD_MOD_STYLE = (
     "color: #1a1a1a !important; } "
     ".today .number { border-radius: 6px !important; background-color: #ff9800 !important; "
     "color: white !important; padding: 0 5px !important; } "
+    # 2026-08-02, kiosk-fit experiment: live-caught real bug - `maxDayEvents` (see
+    # `_WEEK_PLANNER_STATIC_OPTIONS`) only caps how many events RENDER, not how tall they make
+    # the cell; a day with several title-only pills stacked (still ~2-3 lines each once
+    # spacing/padding are counted) grew that day's `.events` box taller than every other day in
+    # its row - and since day cells sit in a wrapping FLEX row (`.container .day` - no CSS
+    # grid, no per-row fixed height), every day in that same calendar row stretches to match the
+    # tallest one, pushing every row below it down and off the bottom of the fixed-height card
+    # (confirmed live: the last row silently scrolled out of view). Capping `.events` itself to
+    # a fixed height with its own internal scroll keeps EVERY day cell - hence every row, hence
+    # the whole grid - a deterministic height regardless of any single day's event count; a busy
+    # day scrolls internally instead of resizing its neighbors. Went through two wrong guesses
+    # before landing on a live-MEASURED value (Playwright `getBoundingClientRect`, not
+    # eyeballing a screenshot): 78px, then 84px, both still clipped something mid-element
+    # because the real driver of pill height turned out to be `--event-padding` (see this
+    # file's own `--event-padding` override above), not text wrapping or pill count as first
+    # assumed. With that fixed, a title-only pill measures 33px and the "+N more" label 21px -
+    # `96px` fits `maxDayEvents: 2` (see `_WEEK_PLANNER_STATIC_OPTIONS`) worth of whole pills
+    # PLUS a fully-visible "more" label (33+33+21+2*3px gaps = 93px + a few px breathing room),
+    # so a busy day never needs its own internal scroll in practice - the `overflow-y: auto`
+    # below is now a pure safety net (e.g. a title too long to ellipsize into the pill's own
+    # width some other way) rather than the primary mechanism.
+    ".day .events { max-height: 96px !important; overflow-y: auto !important; "
+    "overflow-x: hidden !important; } "
     ".event { color: #222 !important; background-color: var(--border-color) !important; "
-    "border-radius: 8px !important; font-size: 1.05em !important; padding: 2px 5px !important; "
+    "border-radius: 8px !important; padding: 3px 6px !important; "
     "max-width: 100% !important; box-sizing: border-box !important; } "
     ".event.past { opacity: .35 !important; } "
-    ".time { color: #444 !important; font-size: 0.95em !important; } "
+    # 2026-08-02, kiosk-fit experiment: title-only events (`showLocation`/`showDescription`
+    # both off in `_WEEK_PLANNER_STATIC_OPTIONS` now - tap-to-see-everything-else is
+    # week-planner-card's own built-in event-click details dialog, unchanged, nothing new
+    # needed for that part). `.time` has no card-option equivalent to turn off, only a CSS
+    # hide - with it and location/description gone there's headroom to size the remaining
+    # title text up for kiosk legibility.
+    ".event .time { display: none !important; } "
+    # `white-space`/`overflow`/`text-overflow` added after live-measuring the actual DOM
+    # (Playwright `getBoundingClientRect`, not eyeballing a screenshot): an unconstrained
+    # title wraps to 2 lines for anything longer than a few words, making a pill ~49px tall
+    # instead of the ~32px a single line needs - which is what actually blew the `.day .events`
+    # max-height budget below, not the pill count. Forcing a single ellipsized line makes
+    # every pill's height predictable regardless of title length, which the fixed max-height
+    # below depends on to fit a known number of whole pills.
+    ".event .title { font-size: 1.3em !important; font-weight: 600 !important; "
+    "line-height: 1.25 !important; white-space: nowrap !important; overflow: hidden "
+    "!important; text-overflow: ellipsis !important; } "
     # Live-reported real bug: showLocation (this module's own choice, see
     # _WEEK_PLANNER_STATIC_OPTIONS) renders event.location as a plain, unconstrained
     # `.location` div with no override of its own in week-planner-card's own CSS - fine for
@@ -185,7 +255,25 @@ _CARD_MOD_STYLE = (
 
 _WEEK_PLANNER_STATIC_OPTIONS = {
     "showNavigation": True,
-    "showLocation": True,
+    # 2026-08-02, kiosk-fit experiment (EXPERIMENTAL): title-only day cells - full event
+    # details (time/location/description) now only ever appear in week-planner-card's own
+    # built-in tap-to-open details dialog (`_handleEventClick`/`_renderEventDetailsDialog` in
+    # the card's own source - already there, unused by this grid until now since the grid
+    # itself showed everything inline before). `showTitle` is the card's own default (True)
+    # but set explicitly here since it's now the ONLY thing this grid shows.
+    "showTitle": True,
+    "showDescription": False,
+    "showLocation": False,
+    # Caps events rendered per day before falling back to a static "+N more" label (see the
+    # card's own `_renderEvents` - the label isn't clickable, just an indicator) - without
+    # this, one unusually busy day can still push its whole row taller than the fixed
+    # `calc(100vh - ...)` box `_CARD_MOD_STYLE` now constrains the card to, regardless of that
+    # container's own sizing. 2 (not the first guess of 3) to match `.day .events`'s own
+    # `max-height` in `_CARD_MOD_STYLE`, sized to fit exactly 2 whole pills - live-caught
+    # follow-up bug: 3 allowed pills into a box only sized for ~2, so the 3rd rendered pill got
+    # sliced off mid-word instead of cleanly folding into "+N more". Still a guess pending
+    # further live tuning, not a measured number.
+    "maxDayEvents": 2,
     "combineSimilarEvents": True,
     "hidePastEvents": False,
     "compact": False,
