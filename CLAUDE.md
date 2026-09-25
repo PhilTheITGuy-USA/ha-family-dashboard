@@ -4,290 +4,181 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Two things sharing one directory:
+The `family_dashboard` Home Assistant custom integration (repo: `ha-family-dashboard`,
+installed via HACS). **Status: beta** — feature-complete against the v1 plan, not yet declared
+stable. Deliberately deferred (not gaps): a Meals module, and importing from a legacy
+`ha-family-hub` install (`migration/` is a stub).
 
-1. **The `family-dashboard` HA custom integration** (`custom_components/family_dashboard/`,
-   domain `family_dashboard`) — a Home Assistant integration under active development. See
-   `claude-code-kickoff.md` for the full project brief, architecture, and build order before
-   making changes here; it links out to the authoritative planning docs.
-2. **A local Home Assistant test bench** — a `homeassistant/home-assistant:stable` container
-   run via Docker Compose, with its entire state (config, database, logs, onboarding) bind-mounted
-   from `./config`. This doubles as the disposable live instance the project's brief requires for
-   validating the integration end-to-end (not just passing pytest) — see "Live-instance validation"
-   below.
+Layout:
 
-## Running the HA test instance
+- `custom_components/family_dashboard/` — the integration (the only thing HACS ships).
+- `tests/`, `pytest.ini`, `requirements_test.txt` — the pytest suite.
+- `README.md` (HACS-rendered), `SETUP.md` (end-user setup guide), `hacs.json`.
+- `testbench/` — the local HA test instance. Only `testbench/docker-compose.yml` is tracked;
+  everything else there is gitignored local state: `config/` (HA's live `/config`),
+  `config.base-snapshot.tar.gz`, `dev.env` (`HA_URL` + `HA_TOKEN` long-lived token),
+  `screenshots/`, and `claude-code-kickoff.md` (the original project brief, which links to the
+  living planning docs in `C:\Users\philt\CLAUDE_FOLDER\Family Dashboard Mockups\` — those are
+  user-edited, reread them fresh before dashboard/config-flow work).
+
+## Test bench (live HA in Docker)
+
+You have a real Home Assistant instance to test against: container `ha-test-bench`
+(`homeassistant:stable`), http://localhost:8123, timezone `America/New_York`. Use it; don't
+stop at green pytest.
 
 ```bash
-docker compose up -d        # start (or restart after config changes that need a full reload)
-docker compose logs -f      # tail Home Assistant logs
-docker compose restart      # restart to pick up configuration.yaml or custom_components changes
-docker compose down         # stop
+docker compose -f testbench/docker-compose.yml up -d
+docker compose -f testbench/docker-compose.yml restart   # pick up custom_components changes
+docker compose -f testbench/docker-compose.yml logs -f
+source testbench/dev.env                                  # $HA_URL, $HA_TOKEN for REST/WS calls
 ```
 
-The UI is at http://localhost:8123. `dev.env` (gitignored) holds `HA_URL` and a Long-Lived
-Access Token for driving the REST/WebSocket API directly.
+The base state is roster Phil/Lhen/Tristan/Harlee; HA users dunsel (owner), Marcus, and
+Kiosk (password `kiosk`); `calendar.family`/`calendar.ava` fixtures; US/Philippines Holiday
+entries; family_dashboard installed and configured. To restore it: `down`, rename
+`testbench/config/`, `tar -xzf config.base-snapshot.tar.gz` inside `testbench/`, `up -d`.
+To make the current state the new base, `stop` the container first (the SQLite recorder and
+`.storage` JSON can be mid-write), then `tar -czf` and `start`. The snapshot contains the
+real auth DB and token, so it's never committed.
+
+### Live validation (required before calling any change done)
+
+A predecessor project shipped 13/13 passing tests and still failed its first real install.
+After tests pass:
+
+1. Copy `custom_components/family_dashboard` into `testbench/config/custom_components/` and
+   restart.
+2. Check the container logs for errors. Pytest doesn't catch blocking I/O in entity properties
+   or listeners missing `@callback`, but live HA logs do.
+3. For config-flow changes, walk every step over REST (`POST /api/config/config_entries/flow`)
+   and confirm the results via `GET /api/states` and `GET /api/config/config_entries/entry`,
+   not just that the flow calls succeeded.
+4. For dashboard changes, check the cards render in a real browser (next section). A
+   generated config that looks right can still throw a JS template error or have a `card_mod`
+   selector that misses the shadow DOM.
+
+### Browser verification
+
+No browser automation is installed on the host. Run a disposable
+`mcr.microsoft.com/playwright/python` container on the `ha-test-bench_default` network, point
+it at `http://ha-test-bench:8123`, and log in as a real account: `kiosk`/`kiosk` for the Kiosk
+bucket (everyone at once), or a linked roster member's account for a personal bucket. Capture
+console errors, and measure layout with `getComputedStyle`/`getBoundingClientRect` rather than
+judging from one fixed-wait screenshot. Screenshots have produced false positives here before,
+so corroborate against backend state before reporting a live bug. Put screenshots under
+`testbench/screenshots/`.
 
 ## Running the test suite
 
-**On native Windows, `pytest-homeassistant-custom-component` does not work at all** — don't
-bother creating a `.venv` here or running `pytest` directly with the host Python. Two independent
-blockers, either one fatal on its own: it unconditionally calls
-`pytest_socket.disable_socket(allow_unix_socket=True)` before every test, but asyncio's
-Windows `ProactorEventLoop` needs a real (non-unix) socket for its self-pipe, so every test
-fails with `SocketBlockedError` (`--force-enable-socket` does not help — the block is a
-hardcoded call, not the CLI-flag-driven one); separately, `homeassistant/runner.py` itself
-unconditionally imports the Unix-only `fcntl` stdlib module, so even collection fails with
-`ModuleNotFoundError: No module named 'fcntl'` before pytest-socket is reached. Run the suite
-inside Linux instead — a disposable container is the simplest way, no venv/host install
-needed. Use `python:3.14-slim`, not `python:3.12-slim` — the latter's pip has been seen
-failing to resolve the pinned `pytest-homeassistant-custom-component` version even though it
-genuinely exists on PyPI (an image-specific pip quirk, not a real availability gap):
+`pytest-homeassistant-custom-component` can't run on native Windows (a hardcoded
+`pytest_socket.disable_socket` breaks the Proactor loop's self-pipe, and `homeassistant/runner.py`
+imports Unix-only `fcntl`). Don't make a host venv. Run it in a disposable Linux container,
+using `python:3.14-slim` (3.12-slim's pip fails to resolve the pinned version):
 
 ```bash
-docker run --rm -v "/c/ha-test-bench:/app" -w /app python:3.14-slim \
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/app" -w /app python:3.14-slim \
   bash -c "pip install -q -r requirements_test.txt && python -m pytest tests/ -v"
-
-# single file — same container, just narrow the pytest target:
-docker run --rm -v "/c/ha-test-bench:/app" -w /app python:3.14-slim \
-  bash -c "pip install -q -r requirements_test.txt && python -m pytest tests/test_config_flow.py -v"
+# single file / test: narrow the target, e.g. tests/test_config_flow.py::test_name
 ```
 
-(On Windows/Git Bash, prefix with `MSYS_NO_PATHCONV=1` so `-w /app` isn't mangled into a
-Windows path.)
+`requirements_test.txt` pins `holidays`/`babel` because `holidays_setup.py` drives HA's
+built-in Holiday integration's real config flow under test, and the test container doesn't
+auto-install other integrations' manifest requirements. Anything that exercises another
+integration's flow needs its requirements added there. The pytest harness caps at an older HA
+upstream than the live bench runs, so verify HA-core behavior against the live instance.
 
-`requirements_test.txt` pins `holidays`/`babel` explicitly alongside
-`pytest-homeassistant-custom-component` — not incidental version pins, but requirements of
-HA's own built-in "Holiday" integration, which `holidays_setup.py` drives the real config flow
-of under test. The disposable pytest container doesn't auto-install a component's own
-manifest-declared requirements the way a real running HA instance does, so anything exercising
-another integration's flow under test needs its requirements listed here too.
+## Releasing
 
-## Live-instance validation (do not skip)
+Bump `version` in `custom_components/family_dashboard/manifest.json` (currently in the
+`1.0.x-betaN` series), keep README's "Status:" line in sync, then tag `vX.Y.Z` and publish a
+GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum HA version
+(2024.6.0).
 
-Per the project brief: an automated pytest pass is necessary but explicitly **not
-sufficient** before calling any module done — a prior related project shipped 13/13 passing
-tests and still failed its first real install. After tests are green, copy
-`custom_components/family_dashboard` into `config/custom_components/family_dashboard`,
-`docker compose restart`, then drive the actual config flow over the REST API using
-`dev.env`'s token (`POST /api/config/config_entries/flow`, walk every step for real) and
-confirm the resulting entities/config entry via `GET /api/states` /
-`GET /api/config/config_entries/entry` — not just that the flow call succeeded.
+## Architecture
 
-## Structure
+- **Roster members** are the unit almost everything hangs off. Each has a stable `member_id`
+  (generated once and never re-derived from name edits; see `util.slugify_unique`), plus
+  `color`, `avatar`, `features` (which of Calendar/Lists/Chores & Rewards they opted into), and
+  an optional `ha_user_id` for a personal dashboard view. Settings/Roster is always on.
+  Disabling a feature must *hide* that member's entities (`hidden_by` in the entity registry),
+  never delete them. `roster.py` holds the mutate+reload helpers for existing members.
+- **`const.py`**: domain, the `FEATURES` registry, and colors/avatars. Its docstring records
+  which decisions are locked.
+- **`config_flow.py`**: the wizard (roster → colors → avatars → birthdates → per-member features
+  → link HA users → per-feature sub-flows → confirm) and `FamilyDashboardOptionsFlow`. The
+  per-member form builders/parsers (`build_*_schema`/`parse_*_input`) are module-level
+  functions so the Options Flow can reuse them pre-filled; keep new steps in that shape. HA has
+  no generic user selector, so build a `select` from `hass.auth.async_get_users()` (active,
+  non-system). `dashboard/registry.py`'s Kiosk bucket reuses the same filter. Wizard steps stay
+  plain dropdowns: no config-flow selector can render a color-swatch or avatar grid.
+  `strings.json` and `translations/en.json` are byte-identical and both hand-maintained, so
+  edit both.
+- **`__init__.py` `async_setup_entry`**: forwards Settings' platforms plus the union of every
+  member's feature platforms, seeds static assets (`assets.py` → `/config/www/family_dashboard/`,
+  `/config/themes/`), provisions Holidays (`holidays_setup.py`, idempotent and best-effort),
+  then builds and registers the dashboard.
+- **`modules/<name>/`** (calendar, lists, chores, settings) hold the real entity logic, and
+  each may add a `dashboard.py` and its own flow step. Top-level `<platform>.py` files are thin
+  shims re-exporting the modules' `async_setup_entry`. See `modules/__init__.py`'s docstring
+  for the new-module checklist. `modules/settings/` is the reference pattern.
+- **`dashboard/`**: `registry.py` generates four uniformly labeled tabs
+  (Calendar/Lists/Chores/Settings) for every viewer, and a custom strategy
+  (`www/family-dashboard-strategy.js`) swaps per-viewer-bucket *content* client-side. An
+  earlier per-person-named-views design was deliberately reverted, so read the docstring first.
+  Views need `type: sections` + `subview: true`. `register.py` does storage-mode dashboard and
+  resource registration against HA internals that differ by version. Reread its docstring
+  before touching registration.
+- **`user_watch.py` / `unmapped_users.py`**: `user_watch.py` reloads the entry (debounced)
+  when HA user add/update/remove events change Kiosk-bucket membership. `unmapped_users.py`
+  raises a Repair Issue per unlinked user, and dismissing one is a permanent per-user opt-out.
+- **`services.yaml`**: declares only the schemas for the custom services the dashboard calls
+  (task/points/member management, PIN unlock, the `add_event`/`add_chore`/`add_reward`
+  popups). Each module registers its own handlers.
+- **Entity IDs**: `has_entity_name = True` with a shared per-entry device gives
+  `<device>_<name>` IDs (e.g. `select.family_dashboard_ada_color`). If that device is assigned
+  to an HA area before an entity is first registered, HA prefixes the area too
+  (`number.living_room_family_dashboard_...`). New entities must pin `self.entity_id`
+  explicitly in `__init__`.
 
-- `SETUP.md` — the end-user-facing setup guide (HACS install steps, the five required
-  third-party Lovelace cards and their tested versions, prerequisites, Known Issues). Several
-  gotchas noted elsewhere in this file (Family-calendar exact-name matching, week-planner-card
-  version pinning) are also called out here for the end user — keep both in sync when either
-  changes.
-- `docker-compose.yml` — the HA test-instance service definition (container name
-  `ha-test-bench`, port 8123, timezone `America/New_York`).
-- `config/` — the test instance's live state (bind-mounted into the container at `/config`).
-  Gitignored entirely — it's runtime state (db, logs, `.storage`, `secrets.yaml`), not
-  source. `config/configuration.yaml` is HA's own entry point (unrelated to the integration's
-  `custom_components/` code until that gets copied into `config/custom_components/` for a
-  live-validation run, per above). It's a plain bind mount, not a Docker volume, so
-  `docker compose down`/`up` alone never touches it - only losing the `config/` directory
-  itself (disk failure, accidental delete, moving to a new machine) actually needs recovery.
-  `config.base-snapshot.tar.gz` (repo root, gitignored - same sensitivity as `dev.env`: it
-  contains the real auth database, including the `dunsel` owner account's Long-Lived Access
-  Token) is a point-in-time snapshot of `config/` taken 2026-07-26, meant to be the
-  restorable "base" state for this test bench (roster: Phil/Lhen/Tristan/Harlee; HA users
-  dunsel/Marcus/Kiosk; a `calendar.family`/`calendar.ava` test fixture and US/Philippines
-  Holiday entries; family_dashboard already installed and configured). To restore:
-  `docker compose down`, delete/rename the existing `config/`, `tar -xzf
-  config.base-snapshot.tar.gz`, `docker compose up -d`. This snapshot doesn't auto-update -
-  if the test bench's roster/fixtures meaningfully change going forward and the new state
-  should become the new restore point, re-run the same `docker compose stop` + `tar -czf` +
-  `docker compose start` sequence to replace it (stop first: HA's SQLite recorder db and
-  `.storage` JSON files can be mid-write while running, and a snapshot taken then risks
-  restoring a corrupted/inconsistent state).
-- `custom_components/family_dashboard/` — the integration's source.
-  - `const.py` — domain, roster/feature constants, the `FEATURES` registry (Calendar/Lists/
-    Chores & Rewards), color/avatar constants. Read its module docstring first; it records
-    which decisions are locked vs. still scaffold-stage (`FEATURES[...]["implemented"]`).
-  - `config_flow.py` — the setup wizard; see its module docstring for the full step
-    sequence (roster → colors → per-member features → link HA users → per-feature
-    sub-flows → confirm) and `FamilyDashboardOptionsFlow` (reconfigure after initial setup,
-    reuses the same `build_*_schema`/`parse_*_input` functions as the initial flow).
-    `strings.json` and `translations/en.json` are byte-identical and both hand-maintained —
-    a new/changed step's title, description, or field labels need editing in both files or
-    the English UI silently falls back to stale/missing text; there's no build step that
-    generates one from the other.
-  - `__init__.py` — `async_setup_entry`: forwards Settings' always-on platforms plus the
-    union of every roster member's selected features' platforms, seeds static assets
-    (`assets.py`), then builds and registers the generated Lovelace dashboard
-    (`dashboard/`).
-  - `modules/<name>/` — per-feature entity logic (`calendar/`, `lists/`, `chores/`,
-    `settings/`). `modules/settings/` is the reference pattern for "own entity platform, no
-    YAML". Each module can also contribute a `dashboard.py` (cards for its feature) and/or
-    its own config-flow step. See `modules/__init__.py`'s docstring for the full new-module
-    checklist.
-  - Top-level `<platform>.py` files (`calendar.py`, `todo.py`, `select.py`, etc.) — thin
-    shims HA requires at the integration's top level, re-exporting each module's real
-    `async_setup_entry`.
-  - `dashboard/` — generates and registers the multi-view Lovelace dashboard on every entry
-    setup. `dashboard/registry.py`'s module docstring explains the current architecture:
-    four uniformly-labeled tabs (Calendar/Lists/Chores/Settings) for every viewer, with
-    per-viewer-bucket *content* swapped in client-side by a custom dashboard strategy
-    (`www/family-dashboard-strategy.js`) rather than by generating differently-named views —
-    read this before touching dashboard generation, the earlier per-person-named-views
-    design was deliberately reverted. `dashboard/register.py` does the actual storage-mode
-    dashboard/resource registration; its module docstring documents three corrections found
-    by reading HA core source directly (no public API reaches the real `DashboardsCollection`;
-    `hass.data` stores dashboards/resources in different shapes across HA versions and both
-    must be handled; `frontend.async_register_built_in_panel`'s kwargs differ by version too)
-    — reread it before touching dashboard *registration* (as opposed to dashboard *content*,
-    which is `registry.py`'s concern).
-  - The household-shared calendar ("Family calendar") is auto-detected, not roster-mapped:
-    `modules/calendar/dashboard.py`'s `_family_calendar_entity` scans for any `calendar.*`
-    entity whose name matches "Family" *exactly* (case-insensitively) and, if found, adds it
-    as its own always-on-by-default toggle pill (`switch.family_dashboard_family_calendar_shown`)
-    on both the Kiosk bucket's and every personal bucket's calendar card — same mechanism as
-    the Birthdays/Holidays overlays. This replaced an earlier design where one flagged roster
-    member's own calendar mapping had to double as the shared calendar (sacrificing that
-    member's personal view); a live install later showed the exact-name match is a real
-    gotcha — a properly-connected shared calendar named anything other than literally "Family"
-    silently never appears, which is why SETUP.md's prerequisites/wizard/Known-Issues sections
-    call this requirement out explicitly. Don't assume a missing Family calendar on a live
-    install is a code bug before checking the entity's actual name.
-  - The Add Event popup's Start/End time fields are a decomposed Date + Hour(1-12) + Minute +
-    AM/PM group per side (`modules/calendar/event_time.py`), not HA's native `datetime`
-    picker — that picker's 12-vs-24-hour display depends on each *viewer's own* HA account
-    profile setting (Settings > General > Time Format), confirmed directly against HA
-    frontend source, which a shared wall-mounted kiosk can't rely on. `event_time.py` is the
-    single source of truth for all 8 fields' unique-id constants (even though the entity
-    classes themselves live in `date.py`/`number.py`/`select.py` per the usual one-file-per-
-    platform convention) and owns `async_recompute_end_from_start`, composing/decomposing
-    through a real Python `datetime` so a Start near midnight correctly rolls End to the next
-    calendar day — don't reimplement this as hour-of-day arithmetic by hand.
-  - Recurring events (`switch.family_dashboard_event_recurring` + a Recurrence preset select,
-    same "switch reveals a conditional card" shape as All Day Event) work by calling the
-    target calendar entity's `async_create_event` *directly* (`events.py`), not via the
-    `calendar.create_event` service — confirmed by reading HA core source that the service's
-    own schema has no `rrule` field at all, even though the two calendar backends this project
-    supports (local_calendar, google) both accept one when called directly. Bypassing the
-    service means replicating its own `CalendarEntityFeature.CREATE_EVENT` support check by
-    hand (`_resolve_calendar_entity`) and its localization step (`event_time.compose_datetime`
-    must return a timezone-*aware* datetime via `dt_util.as_local` — a naive one raises
-    `Expected all values to have a timezone`, since the service normally does that
-    localization itself before the entity ever sees the value).
-  - Live-verified gotcha (2026-07-25, applies to ANY future new entity, not just this
-    session's): if the shared "Family Dashboard" device has already been assigned to an HA
-    *area* (a normal thing to do for a kiosk device) by the time a brand-new entity is first
-    registered, HA's entity registry prefixes its auto-generated entity_id with the area name
-    too (e.g. `number.living_room_family_dashboard_...`), not just the device name — confirmed
-    by reading `entity_registry.py`'s `_async_get_full_entity_name` directly. Every entity
-    shipped before this was discovered dodged it only by luck of being created before any area
-    was ever assigned; a live scan afterward found several pre-existing entities already
-    affected (`text.living_room_family_dashboard_birthdate_entry` and others from the Chores
-    scheduling feature) that were never fixed — a real latent bug across the whole integration,
-    not something this session's fix (pinning `self.entity_id` explicitly in `__init__` on
-    every entity added since) retroactively corrects. New entities going forward should keep
-    pinning `entity_id` explicitly; a blanket fix for pre-existing entities is still open.
-  - `assets.py` — seeds default avatars/background/theme from the package's own `www/`/
-    `themes/` into `/config/www/family_dashboard/`/`/config/themes/` on first setup (HA
-    can't serve files from inside a custom component's package directory directly).
-  - `migration/` — best-effort import from a prior `ha-family-hub` install; currently a
-    stub (`async_detect_legacy_install` always returns `None`), not a v1 gate.
-  - `holidays_setup.py` — one-time auto-provisioning of HA's own built-in "Holiday"
-    integration for the US and Philippines on first setup (computes holidays live from the
-    `holidays` PyPI package, so it's not an ongoing sync). Idempotent by checking existing
-    Holiday config entries before starting a flow, and best-effort: failures are logged and
-    swallowed rather than blocking `async_setup_entry`, since creating another integration's
-    config entry is outside this integration's own domain.
-  - `roster.py` — shared helpers for mutating an *existing* member's features/calendar/
-    notify mapping from live Settings-tab entities and reloading the entry (the Options
-    Flow's own `async_step_add_confirm` is the only other path that writes
-    `entry.data["roster"]`, and it's for adding a brand-new member). Feature-toggle changes
-    go through here specifically because they need the `hidden_by` treatment on top of the
-    plain mutate+reload.
-  - `user_watch.py` / `unmapped_users.py` — keep the generated dashboard's Kiosk bucket
-    correct as HA's user registry changes after initial setup. `user_watch.py` listens for
-    HA's own `user_added`/`user_updated`/`user_removed` auth-manager bus events and reloads
-    the entry (debounced) only when the computed Kiosk-bucket membership actually changes.
-    `unmapped_users.py` raises an HA Repair Issue per active, non-system HA user not linked
-    to any roster member — dismissing it in the Repairs UI is a real permanent per-user
-    opt-out (confirmed against `IssueRegistry.async_get_or_create` behavior), not just a
-    reminder.
-  - `services.yaml` — custom services the dashboard's buttons/popups call instead of acting
-    on entities directly (e.g. `deny_task`/`adjust_points`/`delete_task`/`delete_member`,
-    the PIN-entry/parent-mode-unlock services, `add_event`/`add_chore`/`add_reward` for the
-    scratch-field "Add" popups). Each module registers and handles its own services in its
-    own `async_setup_entry` — this file only declares the schemas HA's service-call UI and
-    validation use.
-  - Chores & Rewards management (add/edit/delete) lives on the Chores tab behind the same
-    Parent PIN gate as Parent Review, not on the (unprotected) Settings tab where it started —
-    a live-reported gap, since it originally had no PIN gate at all.
-  - Chores support an OPTIONAL per-chore `schedule_days` field (2026-07-21,
-    `modules/chores/dashboard.py`/`sensor.py`) — absent/`None` (every chore before this
-    feature) means visible/claimable every day, unchanged; a list of weekdays means only
-    those days. Splitting one chore across multiple kids (e.g. "Dishes" Mon/Wed/Fri for one
-    kid, Tue/Thu/Sat for another) means creating one independent chore record per kid via
-    "Add Chore" — NOT a single record holding a day→assignee map — since claim/approve/
-    points has no "who claimed it today" concept separate from a chore's fixed
-    `assigned_to` (`FamilyDashboardTaskSensor.__init__` fixes it once, permanently). Gating
-    is UI-only (one `type: conditional` per configured day, keyed on a new household
-    `sensor.<device>_day_of_week` entity that rolls over at local midnight via
-    `async_track_time_change`) — same "no backend claim-locking" philosophy `frequency`
-    already established, not new enforcement.
-  - The generated dashboard depends on five third-party Lovelace cards (`button-card`,
-    `bubble-card`, `card-mod`, `config-template-card`, `week-planner-card`) that are now a
-    **manual HACS prerequisite, not vendored** — see SETUP.md's Prerequisites section for the
-    exact versions to install. They used to be bundled directly under a `www/vendor/`
-    directory (removed 2026-07-26); reversed on a live-reported real risk, not a style
-    preference: none of the five guard their own `customElements.define(...)` call with an
-    existence check first (confirmed by reading each one directly), so a user who already had
-    any of them installed separately for their own other dashboards would end up with two
-    copies racing to register the same custom element — the loser throws an uncaught console
-    error and silently never takes effect, and for `week-planner-card` specifically, this
-    integration's own calendar behavior depends on the *exact* pinned v1.14.1's filter-
-    matching internals (see `modules/calendar/dashboard.py`'s own docstring), so a
-    differently-versioned copy silently winning that race could break the calendar in a way
-    that has nothing to do with this integration's own code. See `assets.py`'s and
-    `dashboard/register.py`'s module docstrings for the full history of this reversal.
-- `tests/` — pytest-homeassistant-custom-component suite, one file per module/flow/concern:
-  `test_config_flow.py`, `test_dashboard.py`, `test_assets.py`, `test_util.py`,
-  `test_roster.py`, `test_unmapped_users.py`, `test_notify_resolution.py`,
-  `test_holidays_setup.py`, and per-module `test_<module>_module.py` plus targeted
-  `test_<module>_<concern>.py` files for behavior that doesn't fit the main module test file
-  (e.g. `test_calendar_extras.py`, `test_birthdays_calendar.py`, `test_chores_crud.py`,
-  `test_chores_scheduling.py`).
-- `claude-code-kickoff.md` — where to start; links to the full planning docs (build brief,
-  architecture/rebuild plan, wizard flowchart) at
-  `C:\Users\philt\CLAUDE_FOLDER\Family Dashboard Mockups\`. Those docs are living and
-  user-edited — reread them fresh before dashboard/config-flow work rather than relying on
-  what a past session summarized.
-- `dev.env` (gitignored) — `HA_URL` + Long-Lived Access Token for the live test instance.
+### Calendar module specifics
 
-## Working with the integration
+- **Family calendar** is auto-detected: any `calendar.*` entity whose name is exactly "Family"
+  (case-insensitive). See `_family_calendar_entity` in `modules/calendar/dashboard.py`. A
+  shared calendar with any other name silently won't appear, which SETUP.md warns about.
+  Check the entity name before assuming a code bug.
+- **Add Event times** use a decomposed Date + Hour(1-12) + Minute + AM/PM group, not HA's
+  `datetime` picker, because that picker's 12/24h display follows each viewer's profile and a
+  shared kiosk can't rely on it. `event_time.py` owns the field IDs and the start→end
+  recompute, which goes through real `datetime` so midnight rollover is correct.
+- **Recurring events** call the calendar entity's `async_create_event` directly (`events.py`)
+  because the `calendar.create_event` service schema has no `rrule`. That means replicating
+  the service's `CREATE_EVENT` support check (`_resolve_calendar_entity`) and returning
+  timezone-*aware* datetimes (`dt_util.as_local`).
+- **Kiosk fit**: the whole Kiosk view must fit a 1920x1080 display without scrolling. The
+  numbers in `_CARD_MOD_STYLE` / `_WEEK_PLANNER_STATIC_OPTIONS` (card height
+  `calc(100vh - 240px)`, capped per-day event lists, overridden `--event-padding`) were
+  live-measured and documented inline. Re-measure in a browser before changing them.
 
-- The config flow's step handlers that build/parse per-roster-member form data
-  (`build_*_schema`/`parse_*_input` in `config_flow.py`) are plain module-level functions,
-  not methods, so `FamilyDashboardOptionsFlow` can reuse them pre-filled from an existing
-  config entry instead of duplicating the forms — keep new steps following this shape.
-- Roster members are the unit almost everything else hangs off: each carries its own
-  `member_id` (stable, generated once, never re-derived from a display-name edit — see
-  `util.slugify_unique`'s docstring), `color`, `avatar`, `features` (which of Calendar/
-  Lists/Chores & Rewards they've opted into), and optional `ha_user_id` (links them to an
-  HA user account for a personal dashboard view). Settings/Roster itself is always-on, not
-  a toggle. Disabling a feature via the Options Flow must hide that member's entities
-  (`hidden_by` in the entity registry), never delete them — deleting data is a deliberately
-  separate, not-yet-built action.
-- HA core has no generic "user" selector — picking an existing HA account in a config flow
-  means fetching `hass.auth.async_get_users()` yourself and building a `select` selector
-  from the (active, non-system-generated) results, not `selector({"user": {}})`. The same
-  filter is reused by `dashboard/registry.py`'s Kiosk-bucket computation.
-- `has_entity_name = True` combined with a shared per-config-entry `device_info` (as
-  `modules/settings/` uses) means generated `entity_id`s are `<device_name>_<entity_name>`
-  slugified (e.g. `select.family_dashboard_ada_color`), not just the entity's own name —
-  worth knowing before hand-writing an expected entity_id in a new test.
-- No blocking I/O in entity properties, and state-change listeners need `@callback` — pytest
-  won't catch a violation of either, but live HA logs will. Check the live container's logs
-  after any entity-property or listener change, not just green tests.
-- Generated Lovelace card configs are only verified once seen actually rendering in a real
-  browser with the console open — a config that looks structurally right (right keys,
-  valid-looking JSON) can still fail silently or throw a JS template error client-side (e.g.
-  `custom:button-card` JS templates, `card_mod` selectors reaching into shadow DOM). Don't
-  call dashboard-generation work done off the generated config alone.
+### Chores module specifics
+
+- Chores & Rewards management sits behind the Parent PIN on the Chores tab, not on Settings.
+- The optional per-chore `schedule_days` (absent means every day) is gated UI-only via
+  conditional cards keyed on `sensor.<device>_day_of_week`. There's no backend claim-locking,
+  the same as `frequency`. Splitting a chore across kids means one chore record per kid,
+  because `assigned_to` is fixed per record.
+
+### Third-party Lovelace cards
+
+The dashboard needs `button-card`, `bubble-card`, `card-mod`, `config-template-card`, and
+`week-planner-card` (pinned v1.14.1, since the calendar relies on its filter internals). Users
+install them as a manual HACS prerequisite; SETUP.md lists the tested versions. Don't re-vendor
+them: none guard `customElements.define`, so a duplicate copy races and breaks (history in
+`assets.py`/`dashboard/register.py` docstrings). Keep SETUP.md in sync when card versions or
+the Family-calendar naming rule change.
+
+## Known open issues
+
+- Some entities created before the area-prefix pinning fix still carry area-prefixed IDs on
+  existing installs (e.g. `text.living_room_family_dashboard_birthdate_entry`, several Chores
+  scheduling entities). A blanket fix is still to do.

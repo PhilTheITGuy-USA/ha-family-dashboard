@@ -18,9 +18,9 @@ neither was true on a real install.  Family Dashboard fixes this
 architecturally: every entity is created live, owned directly by this integration - no YAML,
 no restart dependency.
 
-## Status: 1.0 (2026-08-02)
+## Status: beta (1.0.1-beta1)
 
-Feature-complete against the v1 plan and live-validated end-to-end - not an early scaffold.
+Feature-complete against the v1 plan and live-validated end-to-end, but still in beta.
 Setup is a single wizard (Roster → Colors → Avatars → Birthdates → Features → Link HA users →
 Calendar → Lists → Chores & Rewards → Confirm) that provisions everything live, no YAML, no
 restart required for anything it creates.
@@ -64,11 +64,18 @@ module contract new features (Meals, etc.) need to follow.
 
 ## Development
 
+The test suite needs Linux (`pytest-homeassistant-custom-component` can't run on native
+Windows), so run it in a disposable container from the repo root:
+
 ```
-pip install -r requirements_test.txt
-pytest tests/
+docker run --rm -v "$PWD:/app" -w /app python:3.14-slim   bash -c "pip install -q -r requirements_test.txt && python -m pytest tests/ -v"
 ```
 
-Uses `pytest-homeassistant-custom-component`. A real running dev HA instance is also needed
-for the live-validation gate - see `family-hub-v2-rebuild-plan.md`'s "Dev environment for
-live validation" section.
+Passing tests aren't enough on their own. `testbench/docker-compose.yml` runs a local Home
+Assistant instance (http://localhost:8123) for live-validating changes end-to-end:
+
+```
+docker compose -f testbench/docker-compose.yml up -d
+```
+
+Its state (`testbench/config/`) is local-only and gitignored.

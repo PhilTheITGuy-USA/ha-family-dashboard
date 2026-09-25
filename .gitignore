@@ -1,13 +1,19 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
 *.egg-info/
+
+# OS / editor
 .DS_Store
-dev.env
-family-dashboard-dev-config/
-config/
-config.bak-*/
-config.base-snapshot.tar.gz
 .claude/
+
+# Local HA test bench: only the compose file is part of the repo. config/, snapshots,
+# dev.env (HA token), screenshots and local planning notes stay on this machine.
+testbench/*
+!testbench/docker-compose.yml
+
+# Stray temp dirs from browser-automation runs
+.tmp_playwright*/

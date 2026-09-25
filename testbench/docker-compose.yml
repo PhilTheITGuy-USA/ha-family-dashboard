@@ -1,3 +1,7 @@
+# Local Home Assistant test bench for live-validating the family_dashboard integration.
+# Everything else in testbench/ (config/, snapshots, dev.env, screenshots) is local state
+# and gitignored - only this file is tracked.
+name: ha-test-bench
 services:
   homeassistant:
     container_name: ha-test-bench
