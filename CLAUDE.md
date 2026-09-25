@@ -24,7 +24,8 @@ Layout:
 ## Test bench (live HA in Docker)
 
 You have a real Home Assistant instance to test against: container `ha-test-bench`
-(`homeassistant:stable`), http://localhost:8123, timezone `America/New_York`. Use it; don't
+(`ghcr.io/home-assistant/home-assistant:stable`, with `testbench/config/` bind-mounted as
+`/config`), http://localhost:8123, timezone `America/New_York`. Use it; don't
 stop at green pytest.
 
 ```bash
@@ -47,8 +48,9 @@ real auth DB and token, so it's never committed.
 A predecessor project shipped 13/13 passing tests and still failed its first real install.
 After tests pass:
 
-1. Copy `custom_components/family_dashboard` into `testbench/config/custom_components/` and
-   restart.
+1. Copy the integration onto the bench and restart:
+   `rm -rf testbench/config/custom_components/family_dashboard && cp -r custom_components/family_dashboard testbench/config/custom_components/`
+   (replace rather than overlay, so deleted files don't linger), then `restart`.
 2. Check the container logs for errors. Pytest doesn't catch blocking I/O in entity properties
    or listeners missing `@callback`, but live HA logs do.
 3. For config-flow changes, walk every step over REST (`POST /api/config/config_entries/flow`)
