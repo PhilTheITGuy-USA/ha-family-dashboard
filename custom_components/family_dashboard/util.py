@@ -42,13 +42,6 @@ def iso_to_ddmmyyyy(value: str) -> str:
     return f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year:04d}"
 
 
-def format_schedule_days(days: list[str] | None) -> str:
-    """The inverse display helper - `_chore_row`'s "Schedule" pill text."""
-    if not days:
-        return "Every day"
-    return ", ".join(day[:3].capitalize() for day in days)
-
-
 def slugify_unique(name: str, existing: set[str]) -> str:
     """Turn a display name into a stable, unique snake_case id.
 

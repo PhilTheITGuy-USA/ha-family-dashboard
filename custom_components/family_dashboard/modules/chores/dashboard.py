@@ -36,16 +36,17 @@ always present in its Review row and the Deny action reads it live via button-ca
 templating in `tap_action.data` (already proven in this file for `async_parent_lock_card`'s
 state-dependent action/color) rather than needing a shared scratch field pre-loaded first.
 
-Chores can optionally be day-of-week scheduled (2026-07-21, `_member_task_cards`): splitting
-one chore across multiple kids means creating one independent chore record per kid, each with
-its own `schedule_days` subset (e.g. two "Dishes" chores, Tristan Mon/Wed/Fri and Harlee
-Tue/Thu/Sat) - NOT one record holding a day->assignee map, since claim/approve/points has no
-"who claimed it today" concept separate from a chore's fixed `assigned_to` (see
-`modules/chores/sensor.py`'s docstring). A scheduled chore's tile is wrapped in one
-`type: conditional` per configured day, keyed on the household's day-of-week sensor
-(`FamilyDashboardDayOfWeekSensor`) - the same conditional mechanism already proven for the
-Parent PIN gate, just watching a different entity. An unscheduled chore (`schedule_days`
-absent/`None`, the default) is unaffected - visible every day, exactly as before this feature.
+Chores are scheduled (see `schedule.py`): each chore tile is wrapped in ONE
+`type: conditional` shown while its task sensor's `due_today` attribute is true or its state
+is "claimed" (so a kid still sees a claim waiting for review). Splitting a chore across kids
+means one chore record per kid, each with its own schedule - claim/approve/points has no
+"who claimed it today" concept separate from a chore's fixed `assigned_to`.
+
+The Schedule picker (Add Chore popup and each chore's Edit Schedule popup) is a Repeat
+dropdown plus tap-to-toggle pills - 7 weekdays or a 1-31 grid, each shown only for its own
+Repeat choice. A pill calls `family_dashboard.toggle_schedule_day` with its fixed token and
+lights up from the picker's days text entity. The Edit popup pre-fills itself through
+Bubble Card's pop-up `open_action`, calling `family_dashboard.load_chore_schedule`.
 """
 from __future__ import annotations
 
@@ -53,13 +54,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from ...const import CONF_CHORES, CONF_FEATURES, CONF_REWARDS, DOMAIN
-from ...util import format_schedule_days
+from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, DOMAIN
 from ..calendar.dashboard import member_avatar_toggle_pill
+from .schedule import WEEKDAY_KEYS, describe
 from .sensor import (
-    _day_of_week_unique_id,
     _deny_reason_unique_id,
+    _new_chore_repeat_unique_id,
+    _new_chore_schedule_unique_id,
     _points_unique_id,
+    _schedule_repeat_unique_id,
     _schedule_scratch_unique_id,
     _task_unique_id,
 )
@@ -142,18 +145,34 @@ def _tile(entity_id: str, name: str, icon: str, tap_target: str | None = None) -
     return card
 
 
+def _due_or_claimed(sensor_id: str, card: dict) -> dict:
+    """Show `card` while the chore is due today or has a claim awaiting review."""
+    return {
+        "type": "conditional",
+        "conditions": [
+            {
+                "condition": "or",
+                "conditions": [
+                    {
+                        "condition": "state",
+                        "entity": sensor_id,
+                        "attribute": "due_today",
+                        "state": "true",
+                    },
+                    {"condition": "state", "entity": sensor_id, "state": "claimed"},
+                ],
+            }
+        ],
+        "card": card,
+    }
+
+
 async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: dict) -> list[dict]:
     """Points tile plus one tile per chore/reward assigned to this member. Empty if they have
     neither chores nor rewards assigned (still shows Points if they have the feature).
 
-    A chore with `schedule_days` set (see `util.parse_schedule_days_text`) is only visible on
-    those days: its tile is wrapped in one `type: conditional` per configured day, keyed on
-    the household's `FamilyDashboardDayOfWeekSensor` state - deliberately N separate
-    single-state conditionals rather than one multi-value condition, since nothing in this
-    codebase currently uses or has verified list-based OR state-matching, while this exact
-    single-state conditional shape is already proven for the Parent PIN gate. An unscheduled
-    chore (`schedule_days` absent/`None` - every existing chore before this feature, and the
-    default for every new one) renders exactly as before, unconditionally."""
+    Each chore tile shows only while the chore is due today or claimed - see
+    `_due_or_claimed`."""
     ent_reg = er.async_get(hass)
     cards: list[dict] = []
 
@@ -166,7 +185,6 @@ async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: di
     chores = [c for c in entry.data.get(CONF_CHORES, []) if c["assigned_to"] == member["member_id"]]
     if chores:
         cards.append({"type": "markdown", "content": "#### Chores"})
-        day_of_week_entity_id = None
         for chore in chores:
             task_uid = _task_unique_id(entry, chore["chore_id"], "chore")
             sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, task_uid)
@@ -174,25 +192,7 @@ async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: di
             if not sensor_id:
                 continue
             tile = _tile(sensor_id, chore["name"], "mdi:broom", tap_target=claim_id)
-            schedule_days = chore.get("schedule_days")
-            if not schedule_days:
-                cards.append(tile)
-                continue
-            if day_of_week_entity_id is None:
-                day_of_week_entity_id = ent_reg.async_get_entity_id(
-                    "sensor", DOMAIN, _day_of_week_unique_id(entry)
-                )
-            if not day_of_week_entity_id:
-                cards.append(tile)
-                continue
-            for day in schedule_days:
-                cards.append(
-                    {
-                        "type": "conditional",
-                        "conditions": [{"entity": day_of_week_entity_id, "state": day}],
-                        "card": tile,
-                    }
-                )
+            cards.append(_due_or_claimed(sensor_id, tile))
 
     rewards = [r for r in entry.data.get(CONF_REWARDS, []) if r["assigned_to"] == member["member_id"]]
     if rewards:
@@ -223,8 +223,9 @@ def _review_item_card(
     reason_entity_id: str | None,
     name: str,
 ) -> dict:
-    """One pending claim's Reason/Approve/Deny row, only rendered while that item's sensor is
-    actually "claimed" - updates live without a dashboard regenerate as claims resolve.
+    """One pending claim's Approve/Reset/Reason/Deny row, only rendered while that item's
+    sensor is actually "claimed" - updates live without a dashboard regenerate as claims
+    resolve.
 
     The Reason tile is a plain `text` entity tile (tap opens the native more-info text-entry
     dialog, same pattern as the per-item Name/Points fields) sitting right next to Deny. Deny
@@ -247,6 +248,23 @@ def _review_item_card(
                 },
             }
         )
+    # Undo a mistaken claim - no reason needed, unlike Deny.
+    action_cards.append(
+        {
+            "type": "custom:button-card",
+            "entity": sensor_entity_id,
+            "name": "Reset",
+            "icon": "mdi:undo-variant",
+            "show_name": True,
+            "show_icon": True,
+            "tap_action": {
+                "action": "perform-action",
+                "perform_action": "family_dashboard.reset_claim",
+                "target": {"entity_id": sensor_entity_id},
+            },
+            "styles": {"card": [{"box-shadow": "none"}]},
+        }
+    )
     if reason_entity_id:
         action_cards.append(
             {"type": "tile", "entity": reason_entity_id, "name": "Reason", "icon": "mdi:comment-text-outline"}
@@ -627,16 +645,16 @@ def _manage_delete_tile(entity_id: str | None, item_name: str) -> dict:
 
 
 def _schedule_pill(chore: dict, chore_id: str) -> dict:
-    """Like `_field_pill`, but for `schedule_days` - there's no single entity holding this
-    value to open a native more-info dialog on (it's derived from `entry.data`, not backed by
-    its own per-chore entity), so this navigates to the `#schedule-{chore_id}` edit popup
-    instead, same reasoning `modules/settings/dashboard.py`'s birthdate pill already
-    established for a field with no natural entity of its own."""
+    """Like `_field_pill`, but for the chore's schedule - there's no single entity holding
+    it to open a native more-info dialog on (it's derived from `entry.data`), so this
+    navigates to the `#schedule-{chore_id}` edit popup instead, same reasoning
+    `modules/settings/dashboard.py`'s birthdate pill already established for a field with no
+    natural entity of its own."""
     return {
         "type": "custom:button-card",
         "show_name": True,
         "show_icon": False,
-        "name": f"Schedule: {format_schedule_days(chore.get('schedule_days'))}",
+        "name": f"Schedule: {describe(chore)}",
         "tap_action": {"action": "navigate", "navigation_path": f"#schedule-{chore_id}"},
         "styles": _MANAGE_FIELD_PILL_STYLE,
     }
@@ -660,13 +678,93 @@ def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
     }
 
 
+def _day_pill(label: str, token: str, days_entity_id: str) -> dict:
+    """One tap-to-toggle schedule pill, lit while `token` is among the picked days. Bound to
+    the days entity so button-card re-renders when the picks change."""
+    picked = (
+        f"[[[ var s = states['{days_entity_id}']; "
+        f"return s && s.state.split(',').includes('{token}') ? "
+    )
+    return {
+        "type": "custom:button-card",
+        "entity": days_entity_id,
+        "name": label,
+        "show_name": True,
+        "show_icon": False,
+        "show_state": False,
+        "tap_action": {
+            "action": "perform-action",
+            "perform_action": "family_dashboard.toggle_schedule_day",
+            "target": {"entity_id": days_entity_id},
+            "data": {"value": token},
+        },
+        "styles": {
+            "card": [
+                {"height": "40px"},
+                {"padding": "0"},
+                {"border-radius": "12px"},
+                {"box-shadow": "none"},
+                {"background-color": picked + "'var(--primary-color)' : 'rgba(255,255,255,0.85)' ]]]"},
+            ],
+            "name": [
+                {"font-size": "15px"},
+                {"font-weight": "600"},
+                {"color": picked + "'white' : '#2b2b2b' ]]]"},
+            ],
+        },
+    }
+
+
+def _schedule_picker(repeat_entity_id: str, days_entity_id: str) -> list[dict]:
+    """Repeat dropdown, then the pills for whichever Repeat is picked (none for One-time)."""
+    weekday_pills = [_day_pill(key.capitalize(), key, days_entity_id) for key in WEEKDAY_KEYS]
+    month_pills = [_day_pill(str(day), str(day), days_entity_id) for day in range(1, 32)]
+    return [
+        {
+            "type": "entities",
+            "entities": [{"entity": repeat_entity_id, "name": "Repeat"}],
+            "show_header_toggle": False,
+        },
+        {
+            "type": "conditional",
+            "conditions": [{"entity": repeat_entity_id, "state": CHORE_REPEATS["days_of_week"]}],
+            "card": {
+                "type": "vertical-stack",
+                "cards": [
+                    {"type": "horizontal-stack", "cards": weekday_pills},
+                    {"type": "markdown", "content": "None picked = every day."},
+                ],
+            },
+        },
+        {
+            "type": "conditional",
+            "conditions": [{"entity": repeat_entity_id, "state": CHORE_REPEATS["monthly"]}],
+            "card": {
+                "type": "vertical-stack",
+                "cards": [
+                    {"type": "grid", "columns": 7, "square": False, "cards": month_pills},
+                    {
+                        "type": "markdown",
+                        "content": (
+                            "Pick at least one day. A day a month doesn't have (e.g. the 31st) "
+                            "falls on its last day."
+                        ),
+                    },
+                ],
+            },
+        },
+    ]
+
+
 def _schedule_edit_popup(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
-    """Save button calls `family_dashboard.set_chore_schedule_days` targeted at THIS chore's
-    own task sensor (same per-row targeting `_manage_delete_tile` already does), reading the
-    SHARED `ChoreScheduleScratchText` scratch field (only one such popup is ever open at a
-    time - see that entity's own docstring)."""
+    """Opening it loads THIS chore's schedule into the shared picker fields
+    (`load_chore_schedule`, via Bubble Card's pop-up `open_action`); Save calls
+    `family_dashboard.set_chore_schedule_days` targeted at this chore's own task sensor (same
+    per-row targeting `_manage_delete_tile` already does). Only one such popup is ever open
+    at a time, so the picker fields can be shared."""
     chore_id = chore["chore_id"]
-    scratch_id = ent_reg.async_get_entity_id("text", DOMAIN, _schedule_scratch_unique_id(entry)) or ""
+    repeat_id = ent_reg.async_get_entity_id("select", DOMAIN, _schedule_repeat_unique_id(entry)) or ""
+    days_id = ent_reg.async_get_entity_id("text", DOMAIN, _schedule_scratch_unique_id(entry)) or ""
     sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore") or ""
     return {
         "type": "custom:bubble-card",
@@ -674,15 +772,13 @@ def _schedule_edit_popup(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
         "hash": f"#schedule-{chore_id}",
         "name": f"{chore['name']} Schedule",
         "icon": "mdi:calendar-week",
+        "open_action": {
+            "action": "perform-action",
+            "perform_action": "family_dashboard.load_chore_schedule",
+            "target": {"entity_id": sensor_id},
+        },
         "cards": [
-            {
-                "type": "markdown",
-                "content": (
-                    "Comma-separated days - Mon, Tue, Wed, Thu, Fri, Sat, Sun - or leave "
-                    "blank for every day."
-                ),
-            },
-            {"type": "entities", "entities": [{"entity": scratch_id, "name": "Days"}], "show_header_toggle": False},
+            *_schedule_picker(repeat_id, days_id),
             {
                 "type": "button",
                 "name": "Save",
@@ -742,22 +838,38 @@ def _add_item_popup(
 def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
     name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_name") or ""
     points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_chore_points") or ""
-    repeat_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_repeat") or ""
     assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_assigned_to") or ""
-    schedule_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_schedule") or ""
-    return _add_item_popup(
-        hash_suffix="addchore",
-        title="Add Chore",
-        icon="mdi:broom",
-        entities=[
-            {"entity": name_id, "name": "Name"},
-            {"entity": points_id, "name": "Points"},
-            {"entity": repeat_id, "name": "Repeat"},
-            {"entity": assigned_id, "name": "Assigned To"},
-            {"entity": schedule_id, "name": "Schedule (optional - blank = every day)"},
+    repeat_id = ent_reg.async_get_entity_id("select", DOMAIN, _new_chore_repeat_unique_id(entry)) or ""
+    days_id = ent_reg.async_get_entity_id("text", DOMAIN, _new_chore_schedule_unique_id(entry)) or ""
+    return {
+        "type": "custom:bubble-card",
+        "card_type": "pop-up",
+        "hash": "#addchore",
+        "name": "Add Chore",
+        "icon": "mdi:broom",
+        "cards": [
+            {
+                "type": "entities",
+                "entities": [
+                    {"entity": name_id, "name": "Name"},
+                    {"entity": points_id, "name": "Points"},
+                    {"entity": assigned_id, "name": "Assigned To"},
+                ],
+                "show_header_toggle": False,
+            },
+            *_schedule_picker(repeat_id, days_id),
+            {
+                "type": "button",
+                "name": "Add Chore",
+                "icon": "mdi:broom",
+                "tap_action": {
+                    "action": "perform-action",
+                    "perform_action": "family_dashboard.add_chore",
+                    "target": {"entity_id": name_id},
+                },
+            },
         ],
-        service="family_dashboard.add_chore",
-    )
+    }
 
 
 def _add_reward_popup(ent_reg, entry: ConfigEntry) -> dict:

@@ -1,10 +1,5 @@
 """Pure-Python tests for util.slugify_unique - no HA runtime needed, fastest tests here."""
-import pytest
-
-from custom_components.family_dashboard.util import (
-    format_schedule_days,
-    slugify_unique,
-)
+from custom_components.family_dashboard.util import slugify_unique
 
 
 def test_basic_slug():
@@ -22,9 +17,3 @@ def test_dedup_on_collision():
 def test_empty_name_falls_back_to_member():
     existing: set[str] = set()
     assert slugify_unique("   ", existing) == "member"
-
-
-def test_format_schedule_days():
-    assert format_schedule_days(None) == "Every day"
-    assert format_schedule_days([]) == "Every day"
-    assert format_schedule_days(["monday", "wednesday", "friday"]) == "Mon, Wed, Fri"

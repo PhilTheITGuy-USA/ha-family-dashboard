@@ -78,46 +78,50 @@ async def test_day_of_week_sensor_registers_midnight_listener(hass: HomeAssistan
     assert kwargs["minute"] == 0
 
 
-async def test_unscheduled_chore_tile_is_unconditional(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    chores = [{"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}]
-    entry = await _setup_entry(hass, roster, chores=chores)
-
-    cards = await _member_task_cards(hass, entry, roster[0])
-    trash_card = next(c for c in cards if c.get("entity") == "sensor.family_dashboard_trash")
-    assert trash_card["type"] == "tile"
-
-
-async def test_scheduled_chore_tile_is_conditional_per_day(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    chores = [
-        {
-            "chore_id": "trash",
-            "name": "Trash",
-            "points": 10,
-            "frequency": "daily",
-            "assigned_to": "ada",
-            "schedule_days": ["monday", "wednesday", "friday"],
-        }
-    ]
-    entry = await _setup_entry(hass, roster, chores=chores)
-
-    cards = await _member_task_cards(hass, entry, roster[0])
-    conditional_cards = [
+def _visibility_conditional(cards, sensor):
+    matches = [
         c
         for c in cards
-        if c.get("type") == "conditional" and c["card"].get("entity") == "sensor.family_dashboard_trash"
+        if c.get("type") == "conditional" and c["card"].get("entity") == sensor
     ]
-    assert len(conditional_cards) == 3
-    days = {c["conditions"][0]["state"] for c in conditional_cards}
-    assert days == {"monday", "wednesday", "friday"}
-    for c in conditional_cards:
-        assert c["conditions"][0]["entity"] == "sensor.family_dashboard_day_of_week"
+    assert len(matches) == 1, matches
+    return matches[0]
 
-    # Not also rendered unconditionally.
-    assert not any(
-        c.get("type") == "tile" and c.get("entity") == "sensor.family_dashboard_trash" for c in cards
-    )
+
+def _shows_when_due_or_claimed(conditional, sensor):
+    return conditional["conditions"] == [
+        {
+            "condition": "or",
+            "conditions": [
+                {"condition": "state", "entity": sensor, "attribute": "due_today", "state": "true"},
+                {"condition": "state", "entity": sensor, "state": "claimed"},
+            ],
+        }
+    ]
+
+
+async def test_every_chore_tile_shows_when_due_or_claimed(hass: HomeAssistant):
+    roster = [_member("Ada", "ada")]
+    chores = [
+        {"chore_id": "trash", "name": "Trash", "points": 10, "repeat": "days_of_week", "assigned_to": "ada"},
+        {
+            "chore_id": "dishes",
+            "name": "Dishes",
+            "points": 5,
+            "repeat": "days_of_week",
+            "schedule_days": ["monday", "wednesday", "friday"],
+            "assigned_to": "ada",
+        },
+        {"chore_id": "bins", "name": "Bins", "points": 5, "repeat": "monthly", "month_days": [1], "assigned_to": "ada"},
+    ]
+    entry = await _setup_entry(hass, roster, chores=chores)
+
+    cards = await _member_task_cards(hass, entry, roster[0])
+
+    for sensor in ("sensor.family_dashboard_trash", "sensor.family_dashboard_dishes", "sensor.family_dashboard_bins"):
+        assert _shows_when_due_or_claimed(_visibility_conditional(cards, sensor), sensor)
+        # Never also rendered unconditionally.
+        assert not any(c.get("type") == "tile" and c.get("entity") == sensor for c in cards)
 
 
 @freezegun.freeze_time("2026-09-21 18:00:00")  # a Monday, so Tristan's chore is due
@@ -150,10 +154,9 @@ async def test_same_named_chore_split_across_two_kids_stays_isolated(hass: HomeA
     harlee_conditionals = [c for c in harlee_cards if c.get("type") == "conditional"]
 
     assert {c["card"]["entity"] for c in tristan_conditionals} == {"sensor.family_dashboard_dishes"}
-    assert {c["conditions"][0]["state"] for c in tristan_conditionals} == {"monday", "wednesday", "friday"}
-
     assert {c["card"]["entity"] for c in harlee_conditionals} == {"sensor.family_dashboard_dishes_2"}
-    assert {c["conditions"][0]["state"] for c in harlee_conditionals} == {"tuesday", "thursday", "saturday"}
+    assert hass.states.get("sensor.family_dashboard_dishes").attributes["due_today"] is True
+    assert hass.states.get("sensor.family_dashboard_dishes_2").attributes["due_today"] is False
 
     # Claiming/approving one is fully independent of the other.
     await hass.services.async_call(
@@ -168,26 +171,112 @@ async def test_same_named_chore_split_across_two_kids_stays_isolated(hass: HomeA
     assert hass.states.get("sensor.family_dashboard_dishes_2").state == "idle"
 
 
-async def test_chore_row_schedule_pill_shows_every_day_or_days(hass: HomeAssistant):
-    await hass.auth.async_create_user(name="Kiosk Account")
-    roster = [_member("Ada", "ada")]
-    chores = [
-        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"},
-        {
-            "chore_id": "dishes",
-            "name": "Dishes",
-            "points": 5,
-            "frequency": "daily",
-            "assigned_to": "ada",
-            "schedule_days": ["monday", "wednesday", "friday"],
-        },
-    ]
-    entry = await _setup_entry(hass, roster, chores=chores)
-
+async def _kiosk_chores(hass, entry):
     config = await async_build_dashboard_config(hass, entry)
-    kiosk_chores = _view_cards(_views_by_path(config)["chores-kiosk"])
-    assert any("Schedule: Every day" in str(c) for c in kiosk_chores)
-    assert any("Schedule: Mon, Wed, Fri" in str(c) for c in kiosk_chores)
+    return _view_cards(_views_by_path(config)["chores-kiosk"])
+
+
+def _find(obj, predicate):
+    """Every dict nested anywhere in `obj` that satisfies `predicate`."""
+    found = []
+    if isinstance(obj, dict):
+        if predicate(obj):
+            found.append(obj)
+        for value in obj.values():
+            found.extend(_find(value, predicate))
+    elif isinstance(obj, list):
+        for value in obj:
+            found.extend(_find(value, predicate))
+    return found
+
+
+_SCHEDULED_CHORES = [
+    {"chore_id": "trash", "name": "Trash", "points": 10, "repeat": "days_of_week", "assigned_to": "ada"},
+    {
+        "chore_id": "dishes",
+        "name": "Dishes",
+        "points": 5,
+        "repeat": "days_of_week",
+        "schedule_days": ["monday", "wednesday", "friday"],
+        "assigned_to": "ada",
+    },
+    {"chore_id": "bins", "name": "Bins", "points": 3, "repeat": "monthly", "month_days": [1, 15], "assigned_to": "ada"},
+    {"chore_id": "garage", "name": "Garage", "points": 20, "repeat": "one_time", "assigned_to": "ada"},
+]
+
+
+async def test_chore_row_schedule_pill_describes_schedule(hass: HomeAssistant):
+    await hass.auth.async_create_user(name="Kiosk Account")
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=_SCHEDULED_CHORES)
+
+    text = str(await _kiosk_chores(hass, entry))
+
+    for label in ("Every day", "Mon, Wed, Fri", "Monthly: 1, 15", "One-time"):
+        assert f"Schedule: {label}" in text
+    assert "Frequency" not in text
+
+
+async def test_edit_schedule_popup_prefills_and_has_pickers(hass: HomeAssistant):
+    await hass.auth.async_create_user(name="Kiosk Account")
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=_SCHEDULED_CHORES)
+
+    cards = await _kiosk_chores(hass, entry)
+    popup = _find(cards, lambda c: c.get("hash") == "#schedule-bins")[0]
+
+    assert popup["open_action"] == {
+        "action": "perform-action",
+        "perform_action": "family_dashboard.load_chore_schedule",
+        "target": {"entity_id": "sensor.family_dashboard_bins"},
+    }
+    assert _find(popup, lambda c: c.get("entity") == "select.family_dashboard_chore_schedule_repeat")
+
+    weekday_pills = _find(popup, lambda c: c.get("tap_action", {}).get("data", {}).get("value") in {"mon", "sun"})
+    month_pills = _find(popup, lambda c: c.get("tap_action", {}).get("data", {}).get("value") in {str(d) for d in range(1, 32)})
+    assert len(weekday_pills) == 2
+    assert len(month_pills) == 31
+    for pill in weekday_pills + month_pills:
+        assert pill["tap_action"]["perform_action"] == "family_dashboard.toggle_schedule_day"
+        assert pill["tap_action"]["target"] == {"entity_id": "text.family_dashboard_chore_schedule_scratch"}
+
+    # Each picker only shows for its own Repeat choice.
+    shown_for = {
+        c["conditions"][0]["state"]
+        for c in _find(popup, lambda c: c.get("type") == "conditional")
+        if c["conditions"][0].get("entity") == "select.family_dashboard_chore_schedule_repeat"
+    }
+    assert shown_for == {"Days of week", "Monthly"}
+
+
+async def test_add_chore_popup_has_repeat_and_pickers(hass: HomeAssistant):
+    await hass.auth.async_create_user(name="Kiosk Account")
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=_SCHEDULED_CHORES)
+
+    cards = await _kiosk_chores(hass, entry)
+    popup = _find(cards, lambda c: c.get("hash") == "#addchore")[0]
+
+    assert _find(popup, lambda c: c.get("entity") == "select.family_dashboard_new_chore_repeat")
+    pills = _find(popup, lambda c: c.get("tap_action", {}).get("perform_action") == "family_dashboard.toggle_schedule_day")
+    assert len(pills) == 7 + 31
+    assert {p["tap_action"]["target"]["entity_id"] for p in pills} == {"text.family_dashboard_new_chore_schedule"}
+    assert _find(popup, lambda c: c.get("tap_action", {}).get("perform_action") == "family_dashboard.add_chore")
+
+
+async def test_parent_review_has_reset_for_chores_and_rewards(hass: HomeAssistant):
+    await hass.auth.async_create_user(name="Kiosk Account")
+    entry = await _setup_entry(
+        hass,
+        [_member("Ada", "ada")],
+        chores=_SCHEDULED_CHORES[:1],
+        rewards=[{"reward_id": "movie", "name": "Movie", "cost": 5, "assigned_to": "ada"}],
+    )
+
+    cards = await _kiosk_chores(hass, entry)
+    resets = _find(cards, lambda c: c.get("tap_action", {}).get("perform_action") == "family_dashboard.reset_claim")
+
+    assert {r["tap_action"]["target"]["entity_id"] for r in resets} == {
+        "sensor.family_dashboard_trash",
+        "sensor.family_dashboard_movie",
+    }
 
 
 NEW_REPEAT = "select.family_dashboard_new_chore_repeat"
