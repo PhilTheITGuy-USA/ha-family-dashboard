@@ -90,6 +90,19 @@ _NO_CHORES_CARD = {
     "content": "No chores are set up yet. Re-run the Family Dashboard setup wizard to add some.",
 }
 
+
+def _chores_off_card(member: dict) -> dict:
+    """A personal bucket whose member simply hasn't opted into Chores - distinct from
+    `_NO_CHORES_CARD`, since other members may well have chores set up."""
+    return {
+        "type": "markdown",
+        "content": (
+            f"Chores & Rewards isn't turned on for {member['name']}. A parent can turn it on "
+            "from the Kiosk's Settings tab."
+        ),
+    }
+
+
 _TABS = ("calendar", "lists", "chores")
 _TAB_TITLES = {"calendar": "Calendar", "lists": "Lists", "chores": "Chores"}
 _TAB_ICONS = {"calendar": "mdi:calendar-heart", "lists": "mdi:clipboard-list", "chores": "mdi:trophy"}
@@ -527,6 +540,8 @@ async def async_build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) 
                 elif tab == "lists":
                     member_cards = await async_lists_cards_for_member(hass, entry, bucket.member)
                     cards.extend(member_cards or [_NO_LISTS_CARD])
+                elif "chores" not in bucket.member.get(CONF_FEATURES, []):
+                    cards.append(_chores_off_card(bucket.member))
                 else:  # chores
                     member_cards = await async_chores_cards_for_member(hass, entry, bucket.member)
                     cards.extend(member_cards or [_NO_CHORES_CARD])

@@ -563,6 +563,29 @@ async def test_calendar_controls_omitted_when_nobody_has_calendar_enabled(hass):
         )
 
 
+async def test_personal_chores_view_says_feature_is_off_not_unset(hass):
+    """A linked member without the Chores feature used to get "No chores are set up yet.
+    Re-run the setup wizard" - wrong, since chores may well exist for everyone else."""
+    ada_account = await hass.auth.async_create_user(name="Ada Account")
+    await hass.auth.async_create_user(name="Kiosk Account")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"roster": [_member("Ada", "ada", ha_user_id=ada_account.id)]},
+    )
+    entry.add_to_hass(hass)
+
+    config = await async_build_dashboard_config(hass, entry)
+    contents = [
+        c.get("content", "")
+        for c in _view_cards(_views_by_path(config)["chores-ada"])
+        if c.get("type") == "markdown"
+    ]
+
+    assert any("Chores & Rewards isn't turned on for Ada" in c for c in contents)
+    assert not any("No chores are set up" in c for c in contents)
+
+
 async def test_lists_kiosk_grouped_by_header_personal_bucket_no_header(hass):
     ada_account = await hass.auth.async_create_user(name="Ada Account")
     await hass.auth.async_create_user(name="Kiosk Account")
