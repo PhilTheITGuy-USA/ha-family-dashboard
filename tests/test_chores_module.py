@@ -320,7 +320,7 @@ async def test_parent_mode_survives_chore_add_reload(hass: HomeAssistant):
     await _unlock(hass)
 
     await crud.async_add_chore(
-        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+        hass, entry, name="Trash", points=10, assigned_to="ada"
     )
     await hass.async_block_till_done()
 
@@ -335,7 +335,7 @@ async def test_chore_change_restarts_parent_mode_timer(hass: HomeAssistant, free
 
     await _advance(hass, freezer, 200)
     await crud.async_add_chore(
-        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+        hass, entry, name="Trash", points=10, assigned_to="ada"
     )
     await hass.async_block_till_done()
 
@@ -350,7 +350,7 @@ async def test_chore_change_while_locked_does_not_unlock(hass: HomeAssistant):
     entry = await _setup_entry(hass, [_member("Ada", "ada")])
 
     await crud.async_add_chore(
-        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+        hass, entry, name="Trash", points=10, assigned_to="ada"
     )
     await hass.async_block_till_done()
 
@@ -611,7 +611,7 @@ async def test_chore_field_entities_created_with_initial_values(hass: HomeAssist
 
     assert hass.states.get("text.family_dashboard_trash_name").state == "Trash"
     assert hass.states.get("number.family_dashboard_trash_points").state == "10"
-    assert hass.states.get("select.family_dashboard_trash_frequency").state == "Weekly"
+    assert hass.states.get("select.family_dashboard_trash_frequency") is None
     assert hass.states.get("select.family_dashboard_trash_assigned_to").state == "Ada"
 
 

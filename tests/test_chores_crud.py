@@ -46,18 +46,25 @@ async def test_add_chore_generates_unique_id_and_creates_entities(hass: HomeAssi
     entry = await _setup_entry(hass, roster)
 
     chore_id = await crud.async_add_chore(
-        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+        hass, entry, name="Trash", points=10, assigned_to="ada"
     )
     await hass.async_block_till_done()
 
     assert chore_id == "trash"
     assert entry.data["chores"] == [
-        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
+        {
+            "chore_id": "trash",
+            "name": "Trash",
+            "points": 10,
+            "assigned_to": "ada",
+            "repeat": "days_of_week",
+        }
     ]
     assert hass.states.get("sensor.family_dashboard_trash") is not None
     assert hass.states.get("text.family_dashboard_trash_name").state == "Trash"
     assert hass.states.get("number.family_dashboard_trash_points").state == "10"
-    assert hass.states.get("select.family_dashboard_trash_frequency").state == "Daily"
+    # Frequency is part of the Schedule popup now - no per-chore Frequency select.
+    assert hass.states.get("select.family_dashboard_trash_frequency") is None
     assert hass.states.get("select.family_dashboard_trash_assigned_to").state == "Ada"
 
 
@@ -67,7 +74,7 @@ async def test_add_chore_dedupes_id_against_existing(hass: HomeAssistant):
     entry = await _setup_entry(hass, roster, chores=chores)
 
     chore_id = await crud.async_add_chore(
-        hass, entry, name="Trash", points=8, frequency="weekly", assigned_to="ada"
+        hass, entry, name="Trash", points=8, assigned_to="ada"
     )
     await hass.async_block_till_done()
 
@@ -96,7 +103,13 @@ async def test_update_chore_field_persists_single_field(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     updated = next(c for c in entry.data["chores"] if c["chore_id"] == "trash")
-    assert updated == {"chore_id": "trash", "name": "Trash", "points": 15, "frequency": "daily", "assigned_to": "ada"}
+    assert updated == {
+        "chore_id": "trash",
+        "name": "Trash",
+        "points": 15,
+        "assigned_to": "ada",
+        "repeat": "days_of_week",
+    }
     assert hass.states.get("number.family_dashboard_trash_points").state == "15"
 
 
@@ -209,7 +222,7 @@ async def test_add_chore_with_no_assignment(hass: HomeAssistant):
     entry = await _setup_entry(hass, roster)
 
     chore_id = await crud.async_add_chore(
-        hass, entry, name="Water Plants", points=5, frequency="weekly", assigned_to=None
+        hass, entry, name="Water Plants", points=5, repeat="one_time", assigned_to=None
     )
     await hass.async_block_till_done()
 
@@ -218,8 +231,8 @@ async def test_add_chore_with_no_assignment(hass: HomeAssistant):
             "chore_id": "water_plants",
             "name": "Water Plants",
             "points": 5,
-            "frequency": "weekly",
             "assigned_to": None,
+            "repeat": "one_time",
         }
     ]
     # Entities still exist (editable/deletable from Settings) even with nobody assigned.
@@ -261,7 +274,6 @@ async def test_add_chore_with_schedule_days_persists(hass: HomeAssistant):
         entry,
         name="Dishes",
         points=5,
-        frequency="daily",
         assigned_to="ada",
         schedule_days=["monday", "wednesday", "friday"],
     )
@@ -279,11 +291,17 @@ async def test_add_chore_without_schedule_days_omits_key(hass: HomeAssistant):
     roster = [_member("ada", "Ada")]
     entry = await _setup_entry(hass, roster)
 
-    await crud.async_add_chore(hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada")
+    await crud.async_add_chore(hass, entry, name="Trash", points=10, assigned_to="ada")
     await hass.async_block_till_done()
 
     assert entry.data["chores"] == [
-        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
+        {
+            "chore_id": "trash",
+            "name": "Trash",
+            "points": 10,
+            "assigned_to": "ada",
+            "repeat": "days_of_week",
+        }
     ]
 
 
@@ -308,3 +326,83 @@ async def test_reassign_existing_chore_to_unassigned_and_back(hass: HomeAssistan
     )
     await hass.async_block_till_done()
     assert entry.data["chores"][0]["assigned_to"] == "ada"
+
+
+async def test_add_chore_stores_monthly_repeat_fields(hass: HomeAssistant):
+    roster = [_member("ada", "Ada")]
+    entry = await _setup_entry(hass, roster)
+
+    await crud.async_add_chore(
+        hass, entry, name="Bins", points=3, assigned_to="ada", repeat="monthly", month_days=[1, 15]
+    )
+    await hass.async_block_till_done()
+
+    assert entry.data["chores"] == [
+        {
+            "chore_id": "bins",
+            "name": "Bins",
+            "points": 3,
+            "assigned_to": "ada",
+            "repeat": "monthly",
+            "month_days": [1, 15],
+        }
+    ]
+
+
+async def test_setup_upgrades_legacy_chores_once(hass: HomeAssistant):
+    """Pre-scheduling installs store `frequency`; setup rewrites them to `repeat` (see
+    `schedule.upgrade_chore`) and a second setup changes nothing."""
+    roster = [_member("ada", "Ada")]
+    chores = [
+        {"chore_id": "trash", "name": "Trash", "points": 1, "frequency": "weekly", "assigned_to": "ada"},
+        {"chore_id": "bed", "name": "Bed", "points": 1, "frequency": "one_time", "assigned_to": "ada"},
+    ]
+    entry = await _setup_entry(hass, roster, chores=chores)
+
+    assert entry.data["chores"] == [
+        {
+            "chore_id": "trash",
+            "name": "Trash",
+            "points": 1,
+            "assigned_to": "ada",
+            "repeat": "days_of_week",
+            "schedule_days": ["sunday"],
+        },
+        {"chore_id": "bed", "name": "Bed", "points": 1, "assigned_to": "ada", "repeat": "one_time"},
+    ]
+
+    upgraded = entry.data["chores"]
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.data["chores"] == upgraded
+
+
+async def test_setup_removes_retired_frequency_selects(hass: HomeAssistant):
+    roster = [_member("ada", "Ada")]
+    entry = MockConfigEntry(
+        version=1,
+        domain=DOMAIN,
+        title="Family Dashboard",
+        data={
+            "roster": roster,
+            "chores": [
+                {"chore_id": "trash", "name": "Trash", "points": 1, "frequency": "daily", "assigned_to": "ada"}
+            ],
+            "rewards": [],
+        },
+        source="user",
+        unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for suffix in ("trash_frequency", "new_chore_frequency"):
+        registry.async_get_or_create(
+            "select", DOMAIN, f"{entry.entry_id}_{suffix}", config_entry=entry,
+            suggested_object_id=f"family_dashboard_{suffix}",
+        )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert registry.async_get("select.family_dashboard_trash_frequency") is None
+    assert registry.async_get("select.family_dashboard_new_chore_frequency") is None

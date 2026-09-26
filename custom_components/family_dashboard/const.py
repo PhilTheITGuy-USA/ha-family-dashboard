@@ -106,7 +106,7 @@ FEATURES: dict[str, dict] = {
     "chores": {
         "name": "Chores & Rewards",
         # "select"/"number" added for live Add/Modify/Delete of chores/rewards from the
-        # Settings dashboard (points/cost, frequency, assigned-to fields) - see
+        # Settings dashboard (points/cost, repeat, assigned-to fields) - see
         # modules/chores/select.py's and modules/chores/number.py's own module docstrings.
         "platforms": ["sensor", "button", "text", "binary_sensor", "select", "number"],
         "default_selected": True,
@@ -151,15 +151,6 @@ CONF_NOTIFY_ENTITY_ID = "notify_entity_id"
 # modules/chores/ for the entities built from them.
 CONF_CHORES = "chores"
 CONF_REWARDS = "rewards"
-
-# Display label only in v1 - not enforced scheduling (no once-per-day/week claim-locking).
-# A chore can be claimed and re-claimed any time; claiming always starts a fresh cycle
-# regardless of prior status. See modules/chores/__init__.py for the reasoning.
-CHORE_FREQUENCIES: dict[str, str] = {
-    "daily": "Daily",
-    "weekly": "Weekly",
-    "one_time": "One-time",
-}
 
 # A chore's `repeat` key -> the Repeat dropdown's label. See modules/chores/schedule.py for
 # what each one means.

@@ -123,7 +123,13 @@ async def test_full_flow_creates_entry(hass):
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "Grace"},
+        {
+            "name": "Trash",
+            "points": 10,
+            "repeat": "days_of_week",
+            "weekdays": ["mon", "thu"],
+            "assigned_to": "Grace",
+        },
     )
     assert result["step_id"] == "add_chore"  # loops back, blank form
 
@@ -180,8 +186,9 @@ async def test_full_flow_creates_entry(hass):
             "chore_id": "trash",
             "name": "Trash",
             "points": 10,
-            "frequency": "daily",
             "assigned_to": "grace",
+            "repeat": "days_of_week",
+            "schedule_days": ["monday", "thursday"],
         }
     ]
     assert data["rewards"] == [
@@ -486,7 +493,7 @@ async def test_options_flow_add_member_can_add_chores_and_rewards_inline(hass):
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"name": "Feed Fish", "points": 5, "frequency": "daily", "assigned_to": "Gerald"},
+        {"name": "Feed Fish", "points": 5, "repeat": "one_time", "assigned_to": "Gerald"},
     )
     assert result["step_id"] == "add_chore"  # loops back, blank form
 
@@ -510,7 +517,9 @@ async def test_options_flow_add_member_can_add_chores_and_rewards_inline(hass):
     gerald_id = next(m["member_id"] for m in entry.data["roster"] if m["name"] == "Gerald")
     chores = entry.data["chores"]
     assert {c["chore_id"] for c in chores} == {"dishes", "feed_fish"}
-    assert next(c for c in chores if c["chore_id"] == "feed_fish")["assigned_to"] == gerald_id
+    feed_fish = next(c for c in chores if c["chore_id"] == "feed_fish")
+    assert feed_fish["assigned_to"] == gerald_id
+    assert feed_fish["repeat"] == "one_time"
     # Ada's pre-existing chore is untouched.
     assert next(c for c in chores if c["chore_id"] == "dishes")["assigned_to"] == "ada"
 
@@ -597,7 +606,13 @@ async def test_wizard_allows_unassigned_chores_and_rewards(hass):
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"name": "Water Plants", "points": 5, "frequency": "weekly", "assigned_to": "Unassigned"},
+        {
+            "name": "Water Plants",
+            "points": 5,
+            "repeat": "monthly",
+            "month_days": ["15", "1"],
+            "assigned_to": "Unassigned",
+        },
     )
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"name": ""})
     assert result["step_id"] == "add_reward"
@@ -615,8 +630,40 @@ async def test_wizard_allows_unassigned_chores_and_rewards(hass):
 
     data = result["data"]
     assert data["chores"] == [
-        {"chore_id": "water_plants", "name": "Water Plants", "points": 5, "frequency": "weekly", "assigned_to": None}
+        {
+            "chore_id": "water_plants",
+            "name": "Water Plants",
+            "points": 5,
+            "assigned_to": None,
+            "repeat": "monthly",
+            "month_days": [1, 15],
+        }
     ]
     assert data["rewards"] == [
         {"reward_id": "family_movie", "name": "Family Movie", "cost": 20, "assigned_to": None}
     ]
+
+
+async def test_wizard_monthly_chore_requires_a_day(hass):
+    """A Monthly chore with no day of the month picked has nothing to be due on - the form
+    must say so rather than store an unschedulable chore."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"roster": "Ada"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"color_0": "Blue"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})  # avatars
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})  # birthdates
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"features_0": ["chores"]}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "add_chore"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"name": "Water Plants", "points": 5, "repeat": "monthly", "assigned_to": "Ada"},
+    )
+
+    assert result["step_id"] == "add_chore"
+    assert result["errors"] == {"month_days": "month_days_required"}

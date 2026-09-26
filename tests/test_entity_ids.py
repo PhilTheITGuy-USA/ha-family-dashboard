@@ -91,7 +91,7 @@ async def test_new_entities_keep_canonical_ids_after_device_renamed(hass: HomeAs
     new_ids = set(_fd_entity_ids(hass, entry)) - before
     assert "select.family_dashboard_grace_avatar" in new_ids
     assert "sensor.family_dashboard_grace_points" in new_ids
-    assert "select.family_dashboard_trash_frequency" in new_ids
+    assert "select.family_dashboard_trash_assigned_to" in new_ids
     assert [i for i in new_ids if not i.split(".", 1)[1].startswith("family_dashboard_")] == []
 
 

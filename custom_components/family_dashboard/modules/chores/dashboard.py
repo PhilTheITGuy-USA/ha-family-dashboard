@@ -565,7 +565,7 @@ def _manage_nav_button(name: str, icon: str, hash_suffix: str) -> dict:
 
 def _field_pill(label: str, entity_id: str | None) -> dict:
     """A generic "<Label>: <value>" pill opening the entity's own native more-info dialog -
-    used for chore/reward fields (name/points-or-cost/frequency/assigned-to). `entity_id` can
+    used for chore/reward fields (name/points-or-cost/assigned-to). `entity_id` can
     be `None` before the platform has forwarded - degrades gracefully instead of crashing."""
     entity_id = entity_id or ""
     return {
@@ -646,7 +646,6 @@ def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
     chore_id = chore["chore_id"]
     name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{chore_id}_name")
     points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{chore_id}_points")
-    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_frequency")
     assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_assigned_to")
     sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore")
     return {
@@ -654,7 +653,6 @@ def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
         "cards": [
             _field_pill("Name", name_id),
             _field_pill("Points", points_id),
-            _field_pill("Frequency", frequency_id),
             _field_pill("Assigned To", assigned_id),
             _schedule_pill(chore, chore_id),
             _manage_delete_tile(sensor_id, chore["name"]),
@@ -744,7 +742,7 @@ def _add_item_popup(
 def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
     name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_name") or ""
     points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_new_chore_points") or ""
-    frequency_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_frequency") or ""
+    repeat_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_repeat") or ""
     assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_assigned_to") or ""
     schedule_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_new_chore_schedule") or ""
     return _add_item_popup(
@@ -754,7 +752,7 @@ def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
         entities=[
             {"entity": name_id, "name": "Name"},
             {"entity": points_id, "name": "Points"},
-            {"entity": frequency_id, "name": "Frequency"},
+            {"entity": repeat_id, "name": "Repeat"},
             {"entity": assigned_id, "name": "Assigned To"},
             {"entity": schedule_id, "name": "Schedule (optional - blank = every day)"},
         ],

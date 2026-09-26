@@ -1,4 +1,4 @@
-"""Chores & Rewards' `select` entities - frequency and assigned-to fields, for both the Add
+"""Chores & Rewards' `select` entities - repeat and assigned-to fields, for both the Add
 Chore/Add Reward popups' scratch fields and each EXISTING chore/reward's own live-editable
 fields. Chores didn't own the `select` platform before this - it's forwarded now whenever any
 roster member has "chores" enabled (see const.py's FEATURES entry), aggregated alongside
@@ -32,13 +32,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from ...const import CHORE_FREQUENCIES, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
 from . import crud
 from .crud import UNASSIGNED_OPTION
 from .crud import member_display_name as _member_name
 from .crud import resolve_assigned_to as _resolve_assigned_to
 
-_FREQUENCY_OPTIONS = list(CHORE_FREQUENCIES.values())
+_REPEAT_OPTIONS = list(CHORE_REPEATS.values())
 
 
 async def async_setup_entry(
@@ -46,13 +46,10 @@ async def async_setup_entry(
 ) -> None:
     member_names = [m["name"] for m in entry.data[CONF_ROSTER]]
     entities: list = [
-        NewChoreFrequencySelect(entry),
+        NewChoreRepeatSelect(entry),
         NewChoreAssignedToSelect(entry, member_names),
         NewRewardAssignedToSelect(entry, member_names),
     ]
-    entities.extend(
-        ChoreFrequencySelect(entry, chore) for chore in entry.data.get(CONF_CHORES, [])
-    )
     entities.extend(
         ChoreAssignedToSelect(entry, chore, member_names)
         for chore in entry.data.get(CONF_CHORES, [])
@@ -64,20 +61,20 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class NewChoreFrequencySelect(SelectEntity):
-    """Add Chore popup's scratch frequency field - reset to the default after each submit
-    (see `crud.async_create_chore_from_scratch_fields`)."""
+class NewChoreRepeatSelect(SelectEntity):
+    """Add Chore popup's scratch Repeat field (Days of week / Monthly / One-time) - see
+    `crud.async_create_chore_from_scratch_fields`."""
 
     _attr_has_entity_name = True
-    _attr_name = "New Chore Frequency"
+    _attr_name = "New Chore Repeat"
     _attr_icon = "mdi:calendar-refresh"
-    _attr_options = _FREQUENCY_OPTIONS
+    _attr_options = _REPEAT_OPTIONS
     _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_new_chore_frequency"
-        self._attr_current_option = CHORE_FREQUENCIES["daily"]
+        self._attr_unique_id = f"{entry.entry_id}_new_chore_repeat"
+        self._attr_current_option = CHORE_REPEATS["days_of_week"]
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -146,42 +143,11 @@ class NewRewardAssignedToSelect(SelectEntity):
         self.async_write_ha_state()
 
 
-class ChoreFrequencySelect(SelectEntity):
-    """Editable frequency field for one EXISTING chore - tap opens the native dropdown
+class ChoreAssignedToSelect(SelectEntity):
+    """Editable assigned-to field for one EXISTING chore - tap opens the native dropdown
     showing its real current value. Not a `RestoreEntity` - same reasoning as `ChoreNameText`
     (modules/chores/text.py): state must derive fresh from `entry.data` each time this is
     reconstructed by the reload its own edit triggers."""
-
-    _attr_has_entity_name = True
-    _attr_icon = "mdi:calendar-refresh"
-    _attr_options = _FREQUENCY_OPTIONS
-    _attr_should_poll = False
-
-    def __init__(self, entry: ConfigEntry, chore: dict) -> None:
-        self._entry = entry
-        self._chore_id = chore["chore_id"]
-        self._attr_name = f"{chore['name']} Frequency"
-        self._attr_unique_id = f"{entry.entry_id}_{self._chore_id}_frequency"
-        self._attr_current_option = CHORE_FREQUENCIES.get(chore["frequency"], _FREQUENCY_OPTIONS[0])
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Family Dashboard",
-            manufacturer="Family Dashboard",
-        )
-
-    async def async_select_option(self, option: str) -> None:
-        label_to_key = {v: k for k, v in CHORE_FREQUENCIES.items()}
-        await crud.async_update_chore_field(
-            self.hass, self._entry, self._chore_id, frequency=label_to_key.get(option, "daily")
-        )
-
-
-class ChoreAssignedToSelect(SelectEntity):
-    """Editable assigned-to field for one EXISTING chore. Same live-field-entity reasoning as
-    `ChoreFrequencySelect`."""
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:account-arrow-right"

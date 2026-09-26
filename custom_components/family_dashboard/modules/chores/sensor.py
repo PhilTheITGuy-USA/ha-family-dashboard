@@ -218,7 +218,7 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         attrs = {"assigned_to": member_name, "kind": kind}
         if kind == "chore":
             attrs["points"] = item["points"]
-            attrs["frequency"] = item["frequency"]
+            attrs["repeat"] = item.get("repeat")
         else:
             attrs["cost"] = item["cost"]
         self._attr_extra_state_attributes = attrs

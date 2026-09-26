@@ -78,7 +78,7 @@ async def test_set_member_features_persists_and_reloads(hass: HomeAssistant):
 async def test_disabling_chores_hides_not_deletes_entities(hass: HomeAssistant):
     roster_data = [_member("ada", "Ada", ["chores"])]
     chores = [
-        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
+        {"chore_id": "trash", "name": "Trash", "points": 10, "assigned_to": "ada", "repeat": "days_of_week"}
     ]
     entry = await _setup_entry(hass, roster_data, chores=chores)
 
@@ -130,7 +130,7 @@ async def test_disable_member_hides_everything_regardless_of_current_features(ha
     flag directly, not `hass.states`, which stays fully live/available throughout."""
     roster_data = [_member("ada", "Ada", ["chores"])]
     chores = [
-        {"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}
+        {"chore_id": "trash", "name": "Trash", "points": 10, "assigned_to": "ada", "repeat": "days_of_week"}
     ]
     entry = await _setup_entry(hass, roster_data, chores=chores)
 

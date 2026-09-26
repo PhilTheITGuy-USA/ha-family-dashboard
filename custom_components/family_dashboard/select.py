@@ -1,6 +1,6 @@
 """Platform aggregator, NOT a plain 1:1 shim - Settings (roster color/avatar, always-on),
 Calendar (view selector + Add Event's target-calendar picker, conditional on any roster member
-having "calendar" enabled), and Chores (frequency/assigned-to fields, conditional on any
+having "calendar" enabled), and Chores (repeat/assigned-to fields, conditional on any
 roster member having "chores" enabled) all need the `select` platform for the same config
 entry. Same shape as text.py's aggregator - see that file's docstring.
 """

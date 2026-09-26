@@ -54,13 +54,13 @@ Steps, in order:
                            (see build_lists_schema).
   3. `add_chore`      - ONLY shown once every member's own loop above has finished, and only
                         if at least one roster member selected "chores". A repeat-until-done
-                        loop: one "add a chore" form (name/points/frequency/assigned-to),
+                        loop: one "add a chore" form (name/points/repeat+days/assigned-to),
                         re-shown blank after each submission: leaving `name` blank ends the
                         loop (not a separate yes/no step - see the function's docstring).
                         Chains to `add_reward` when done. Household-scoped, not per-member -
                         unaffected by the per-member restructuring above.
   4. `add_reward`     - same repeat-until-done shape as `add_chore` (name/cost/assigned-to, no
-                        frequency), also gated on any member's "chores" selection (Rewards
+                        schedule), also gated on any member's "chores" selection (Rewards
                         has no separate feature toggle).
   5. `confirm`        - summary of what's about to be created; submitting creates the config
                         entry.
@@ -87,7 +87,7 @@ from homeassistant.helpers.selector import selector
 
 from .assets import async_seed_assets
 from .const import (
-    CHORE_FREQUENCIES,
+    CHORE_REPEATS,
     COLOR_OPTIONS,
     CONF_AVATAR,
     CONF_BIRTHDATE,
@@ -106,6 +106,7 @@ from .const import (
     ROSTER_MAX_MEMBERS,
 )
 from .modules.chores.crud import UNASSIGNED_OPTION
+from .modules.chores.schedule import REPEAT_DAYS_OF_WEEK, tokens_to_schedule
 from .util import ddmmyyyy_to_iso, iso_to_ddmmyyyy, slugify_unique
 
 
@@ -408,6 +409,38 @@ def parse_lists_input(
     return {name: user_input[_presets_field(idx)] for idx, name in enumerate(list_members)}
 
 
+_CHORE_WEEKDAY_OPTIONS = {
+    "mon": "Mon",
+    "tue": "Tue",
+    "wed": "Wed",
+    "thu": "Thu",
+    "fri": "Fri",
+    "sat": "Sat",
+    "sun": "Sun",
+}
+_CHORE_MONTH_DAY_OPTIONS = {str(day): str(day) for day in range(1, 32)}
+
+
+def chore_schedule_schema_fields() -> dict:
+    """The add-chore form's schedule fields (wizard and options flow): Repeat, plus the
+    days it applies to. Weekdays apply to "Days of week" (none = every day), day numbers to
+    "Monthly" (at least one); the other list is ignored. Multi-select dropdowns, since a
+    config flow can't render the dashboard's tap-to-toggle pills."""
+    return {
+        vol.Optional("repeat", default=REPEAT_DAYS_OF_WEEK): vol.In(CHORE_REPEATS),
+        vol.Optional("weekdays", default=[]): cv.multi_select(_CHORE_WEEKDAY_OPTIONS),
+        vol.Optional("month_days", default=[]): cv.multi_select(_CHORE_MONTH_DAY_OPTIONS),
+    }
+
+
+def parse_chore_schedule_input(user_input: dict[str, Any]) -> dict:
+    """The stored schedule fields for the add-chore form. Raises `ValueError` for Monthly
+    with no day picked (shown as the `month_days_required` form error)."""
+    repeat = user_input.get("repeat", REPEAT_DAYS_OF_WEEK)
+    picked = user_input.get("month_days" if repeat == "monthly" else "weekdays") or []
+    return tokens_to_schedule(repeat, ",".join(picked))
+
+
 class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the Family Dashboard wizard."""
 
@@ -669,27 +702,31 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         chores_members = self._chores_members()
 
+        errors: dict[str, str] = {}
         if user_input is not None:
             name = user_input["name"].strip()
-            if name:
+            if not name:
+                return await self.async_step_add_reward()
+            try:
+                schedule = parse_chore_schedule_input(user_input)
+            except ValueError:
+                errors["month_days"] = "month_days_required"
+            else:
                 self._chores.append(
                     {
                         "name": name,
                         "points": user_input["points"],
-                        "frequency": user_input["frequency"],
+                        "schedule": schedule,
                         "assigned_to_name": user_input["assigned_to"],
                     }
                 )
                 return await self.async_step_add_chore()
-            return await self.async_step_add_reward()
 
         schema = vol.Schema(
             {
                 vol.Optional("name", default=""): str,
                 vol.Optional("points", default=5): vol.Coerce(int),
-                vol.Optional(
-                    "frequency", default="daily"
-                ): vol.In(CHORE_FREQUENCIES),
+                **chore_schedule_schema_fields(),
                 # Assigning to nobody is a valid, explicit choice (matches the Settings
                 # dashboard's own Add Chore popup - modules/chores/crud.py) - a chore doesn't
                 # have to belong to a specific kid.
@@ -701,6 +738,7 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="add_chore",
             data_schema=schema,
+            errors=errors,
             description_placeholders={
                 "count": str(len(self._chores)),
                 "roster": ", ".join(chores_members),
@@ -782,8 +820,8 @@ class FamilyDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "chore_id": slugify_unique(chore["name"], chore_ids),
                     "name": chore["name"],
                     "points": chore["points"],
-                    "frequency": chore["frequency"],
                     "assigned_to": name_to_member_id.get(chore["assigned_to_name"]),
+                    **chore["schedule"],
                 }
                 for chore in self._chores
             ]
@@ -1061,25 +1099,31 @@ class FamilyDashboardOptionsFlow(config_entries.OptionsFlow):
         OTHER existing roster member is out of scope here (that's what the Settings
         dashboard's own Add Chore popup, which can target anyone, is for); this step exists
         so a new member doesn't have to be onboarded chore-less and then edited separately."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             name = user_input["name"].strip()
-            if name:
+            if not name:
+                return await self.async_step_add_reward()
+            try:
+                schedule = parse_chore_schedule_input(user_input)
+            except ValueError:
+                errors["month_days"] = "month_days_required"
+            else:
                 self._chores.append(
                     {
                         "name": name,
                         "points": user_input["points"],
-                        "frequency": user_input["frequency"],
+                        "schedule": schedule,
                         "assigned_to_name": user_input["assigned_to"],
                     }
                 )
                 return await self.async_step_add_chore()
-            return await self.async_step_add_reward()
 
         schema = vol.Schema(
             {
                 vol.Optional("name", default=""): str,
                 vol.Optional("points", default=5): vol.Coerce(int),
-                vol.Optional("frequency", default="daily"): vol.In(CHORE_FREQUENCIES),
+                **chore_schedule_schema_fields(),
                 vol.Optional("assigned_to", default=self._name): vol.In(
                     [self._name, UNASSIGNED_OPTION]
                 ),
@@ -1088,6 +1132,7 @@ class FamilyDashboardOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="add_chore",
             data_schema=schema,
+            errors=errors,
             description_placeholders={"count": str(len(self._chores)), "name": self._name},
         )
 
@@ -1158,8 +1203,8 @@ class FamilyDashboardOptionsFlow(config_entries.OptionsFlow):
                     "chore_id": slugify_unique(chore["name"], chore_ids),
                     "name": chore["name"],
                     "points": chore["points"],
-                    "frequency": chore["frequency"],
                     "assigned_to": _assigned_to(chore["assigned_to_name"]),
+                    **chore["schedule"],
                 }
                 for chore in self._chores
             ]

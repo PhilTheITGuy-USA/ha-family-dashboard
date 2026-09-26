@@ -17,8 +17,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from ...const import CHORE_FREQUENCIES, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
 from ...util import parse_schedule_days_text, slugify_unique
+from .schedule import REPEAT_DAYS_OF_WEEK, REPEAT_MONTHLY
 from .sensor import _deny_reason_unique_id, _task_unique_id
 
 _COMPONENT_MAP = {
@@ -78,25 +79,27 @@ async def async_add_chore(
     *,
     name: str,
     points: int,
-    frequency: str,
     assigned_to: str | None,
+    repeat: str = REPEAT_DAYS_OF_WEEK,
     schedule_days: list[str] | None = None,
+    month_days: list[int] | None = None,
 ) -> str:
+    """Store a new chore. `schedule_days` only applies to `days_of_week` (absent = every
+    day) and `month_days` only to `monthly` - see `schedule.py`."""
     existing_ids = {c["chore_id"] for c in entry.data.get(CONF_CHORES, [])}
     chore_id = slugify_unique(name, existing_ids)
     new_chore = {
         "chore_id": chore_id,
         "name": name,
         "points": points,
-        "frequency": frequency,
         "assigned_to": assigned_to,
+        "repeat": repeat,
     }
-    # Omitted (not set to `None`) when absent, not included as an explicit `None` key - keeps
-    # every unscheduled chore's dict shape byte-for-byte identical to before this field
-    # existed, since `chore.get("schedule_days")` everywhere else treats a missing key and an
-    # explicit `None` identically anyway.
-    if schedule_days:
+    # Omitted rather than stored empty, so `chore.get(...)` treats both the same.
+    if repeat == REPEAT_DAYS_OF_WEEK and schedule_days:
         new_chore["schedule_days"] = schedule_days
+    if repeat == REPEAT_MONTHLY:
+        new_chore["month_days"] = month_days or []
     chores = [*entry.data.get(CONF_CHORES, []), new_chore]
     await _async_persist(hass, entry, **{CONF_CHORES: chores})
     return chore_id
@@ -142,14 +145,13 @@ def chore_field_entity_ids(entry: ConfigEntry, chore_id: str) -> list[tuple[str,
         ("button", f"{task_uid}_approve"),
         ("text", f"{entry.entry_id}_{chore_id}_name"),
         ("number", f"{entry.entry_id}_{chore_id}_points"),
-        ("select", f"{entry.entry_id}_{chore_id}_frequency"),
         ("select", f"{entry.entry_id}_{chore_id}_assigned_to"),
         ("text", _deny_reason_unique_id(entry, chore_id, "chore")),
     ]
 
 
 def reward_field_entity_ids(entry: ConfigEntry, reward_id: str) -> list[tuple[str, str]]:
-    """Same as `chore_field_entity_ids`, for one reward (no frequency field)."""
+    """Same as `chore_field_entity_ids`, for one reward."""
     task_uid = _task_unique_id(entry, reward_id, "reward")
     return [
         ("sensor", task_uid),
@@ -193,7 +195,7 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
     """
     name_entity = _entity(hass, "text", f"{entry.entry_id}_new_chore_name")
     points_entity = _entity(hass, "number", f"{entry.entry_id}_new_chore_points")
-    frequency_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_frequency")
+    repeat_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_repeat")
     assigned_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_assigned_to")
     schedule_entity = _entity(hass, "text", f"{entry.entry_id}_new_chore_schedule")
 
@@ -204,9 +206,9 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
     assigned_option = assigned_entity.current_option if assigned_entity else UNASSIGNED_OPTION
     assigned_to = resolve_assigned_to(entry, assigned_option)
 
-    frequency_label = frequency_entity.current_option if frequency_entity else None
-    label_to_key = {v: k for k, v in CHORE_FREQUENCIES.items()}
-    frequency = label_to_key.get(frequency_label, "daily")
+    repeat_label = repeat_entity.current_option if repeat_entity else None
+    label_to_key = {v: k for k, v in CHORE_REPEATS.items()}
+    repeat = label_to_key.get(repeat_label, REPEAT_DAYS_OF_WEEK)
 
     points = int(points_entity.native_value) if points_entity and points_entity.native_value is not None else 5
 
@@ -225,8 +227,8 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
         entry,
         name=name,
         points=points,
-        frequency=frequency,
         assigned_to=assigned_to,
+        repeat=repeat,
         schedule_days=schedule_days,
     )
 
@@ -239,8 +241,7 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
 
 
 async def async_create_reward_from_scratch_fields(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Same shape as `async_create_chore_from_scratch_fields`, for the Add Reward popup (no
-    frequency field)."""
+    """Same shape as `async_create_chore_from_scratch_fields`, for the Add Reward popup."""
     name_entity = _entity(hass, "text", f"{entry.entry_id}_new_reward_name")
     cost_entity = _entity(hass, "number", f"{entry.entry_id}_new_reward_cost")
     assigned_entity = _entity(hass, "select", f"{entry.entry_id}_new_reward_assigned_to")

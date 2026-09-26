@@ -45,7 +45,15 @@
       },
       "add_chore": {
         "title": "Family Dashboard - Chores",
-        "description": "{count} chore(s) added so far. Add another for one of: {roster} - or leave the name blank to move on to Rewards."
+        "description": "{count} chore(s) added so far. Add another for one of: {roster} - or leave the name blank to move on to Rewards.",
+        "data": {
+          "name": "Chore name (leave blank to finish)",
+          "points": "Points",
+          "repeat": "Repeat",
+          "weekdays": "Days of the week (for Days of week - none picked = every day)",
+          "month_days": "Days of the month (for Monthly - pick at least one)",
+          "assigned_to": "Assigned to"
+        }
       },
       "add_reward": {
         "title": "Family Dashboard - Rewards",
@@ -58,6 +66,7 @@
     },
     "error": {
       "roster_empty": "Enter at least one family member name.",
+      "month_days_required": "Pick at least one day of the month for a Monthly chore.",
       "invalid_birthdate": "Enter a date as DD/MM/YYYY, e.g. 21/06/2015."
     },
     "abort": {
@@ -116,7 +125,15 @@
       },
       "add_chore": {
         "title": "Add Family Member - Chores",
-        "description": "{count} chore(s) added so far for {name}. Add another, or leave the name blank to move on to Rewards."
+        "description": "{count} chore(s) added so far for {name}. Add another, or leave the name blank to move on to Rewards.",
+        "data": {
+          "name": "Chore name (leave blank to finish)",
+          "points": "Points",
+          "repeat": "Repeat",
+          "weekdays": "Days of the week (for Days of week - none picked = every day)",
+          "month_days": "Days of the month (for Monthly - pick at least one)",
+          "assigned_to": "Assigned to"
+        }
       },
       "add_reward": {
         "title": "Add Family Member - Rewards",
@@ -129,6 +146,7 @@
     },
     "error": {
       "name_required": "Enter a name.",
+      "month_days_required": "Pick at least one day of the month for a Monthly chore.",
       "invalid_birthdate": "Enter a date as DD/MM/YYYY, e.g. 21/06/2015."
     }
   },

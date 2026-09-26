@@ -29,6 +29,7 @@ from .dashboard.register import async_register_dashboard, async_register_strateg
 from .dashboard.registry import async_build_dashboard_config
 from .entity_ids import async_repair_prefixed_entity_ids
 from .holidays_setup import async_ensure_default_holidays
+from .modules.chores.upgrade import async_upgrade_chores
 from .unmapped_users import async_check_unmapped_users
 from .user_watch import async_register_user_change_listener
 
@@ -67,6 +68,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # A mutable dict, not entry.data directly - modules/calendar/calendar.py's
     # async_setup_entry stashes its live calendar_entities map + reminder-engine unsub here
     # (see modules/calendar/reminders.py) so async_unload_entry below can clean it up.
+    # Before anything reads entry.data's chores - see modules/chores/upgrade.py.
+    async_upgrade_chores(hass, entry)
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"data": entry.data}
 
     # Seeded BEFORE platform forwarding, and the resulting file list stashed here -
