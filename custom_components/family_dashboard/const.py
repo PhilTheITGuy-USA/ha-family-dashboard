@@ -161,6 +161,14 @@ CHORE_FREQUENCIES: dict[str, str] = {
     "one_time": "One-time",
 }
 
+# A chore's `repeat` key -> the Repeat dropdown's label. See modules/chores/schedule.py for
+# what each one means.
+CHORE_REPEATS: dict[str, str] = {
+    "days_of_week": "Days of week",
+    "monthly": "Monthly",
+    "one_time": "One-time",
+}
+
 # Hex values for each COLOR_OPTIONS name - needed anywhere a generated dashboard card wants
 # an actual color (e.g. week-planner-card's per-calendar `color:`) rather than relying on the
 # name string itself being a valid CSS value (several of these names, e.g. "Amber / Yellow",
