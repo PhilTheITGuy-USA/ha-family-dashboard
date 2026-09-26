@@ -94,9 +94,7 @@ async def _approve(hass, item="trash"):
 
 
 async def _service(hass: HomeAssistant, service: str, entity_id: str = TASK, **data) -> None:
-    await hass.services.async_call(
-        DOMAIN, service, {"entity_id": entity_id, **data}, blocking=True
-    )
+    await hass.services.async_call(DOMAIN, service, {"entity_id": entity_id, **data}, blocking=True)
     await hass.async_block_till_done()
 
 
