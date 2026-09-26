@@ -44,9 +44,14 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from ...const import CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
-from ...util import parse_schedule_days_text
-from .schedule import REPEAT_ONE_TIME, due_day_started_since, is_due
+from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from .schedule import (
+    REPEAT_ONE_TIME,
+    chore_to_tokens,
+    due_day_started_since,
+    is_due,
+    tokens_to_schedule,
+)
 
 
 def _points_unique_id(entry: ConfigEntry, member_id: str) -> str:
@@ -59,6 +64,20 @@ def _day_of_week_unique_id(entry: ConfigEntry) -> str:
 
 def _schedule_scratch_unique_id(entry: ConfigEntry) -> str:
     return f"{entry.entry_id}_chore_schedule_scratch"
+
+
+def _schedule_repeat_unique_id(entry: ConfigEntry) -> str:
+    """The Edit Schedule popup's Repeat select, paired with `_schedule_scratch_unique_id`."""
+    return f"{entry.entry_id}_chore_schedule_repeat"
+
+
+def _new_chore_schedule_unique_id(entry: ConfigEntry) -> str:
+    return f"{entry.entry_id}_new_chore_schedule"
+
+
+def _new_chore_repeat_unique_id(entry: ConfigEntry) -> str:
+    """The Add Chore popup's Repeat select, paired with `_new_chore_schedule_unique_id`."""
+    return f"{entry.entry_id}_new_chore_repeat"
 
 
 def _task_unique_id(entry: ConfigEntry, item_id: str, kind: str) -> str:
@@ -152,6 +171,7 @@ async def async_setup_entry(
     platform.async_register_entity_service(
         "set_chore_schedule_days", {}, "async_set_schedule_days"
     )
+    platform.async_register_entity_service("load_chore_schedule", {}, "async_load_schedule")
 
 
 class FamilyDashboardPointsSensor(SensorEntity, RestoreEntity):
@@ -395,39 +415,48 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         self._refresh_schedule_attributes()
         self.async_write_ha_state()
 
-    def _schedule_scratch_entity(self):
-        component = self.hass.data.get(text_component.DATA_COMPONENT)
-        if component is None:
-            return None
-        entity_id = er.async_get(self.hass).async_get_entity_id(
-            "text", DOMAIN, _schedule_scratch_unique_id(self._entry)
-        )
-        return component.get_entity(entity_id) if entity_id else None
+    def _scratch(self, domain: str, unique_id: str):
+        from . import crud
 
-    async def async_set_schedule_days(self) -> None:
-        """Save button for a chore's `#schedule-{chore_id}` popup (see
-        `modules/chores/dashboard.py`) - reads the SHARED scratch field (only one such popup
-        is ever open at a time), parses it, and persists onto THIS chore (the row whose Save
-        button was tapped), same per-row targeting `family_dashboard.delete_task` already
-        uses. Rewards have no schedule concept - a no-op, not an error, since nothing in the
-        UI should ever call this on one anyway."""
+        return crud._entity(self.hass, domain, unique_id)
+
+    async def async_load_schedule(self) -> None:
+        """Edit Schedule popup's `open_action` - copies THIS chore's schedule into the
+        shared picker fields (Repeat select + days text), so the popup opens pre-filled."""
         if self._kind != "chore":
             return
 
-        scratch_entity = self._schedule_scratch_entity()
-        raw_value = scratch_entity.native_value if scratch_entity else None
+        repeat_entity = self._scratch("select", _schedule_repeat_unique_id(self._entry))
+        days_entity = self._scratch("text", _schedule_scratch_unique_id(self._entry))
+        if repeat_entity is not None:
+            # Selecting the Repeat clears the days text, so it goes first.
+            await repeat_entity.async_select_option(CHORE_REPEATS[self._item.get("repeat", "days_of_week")])
+        if days_entity is not None:
+            await days_entity.async_set_value(chore_to_tokens(self._item))
+
+    async def async_set_schedule_days(self) -> None:
+        """Save button for a chore's `#schedule-{chore_id}` popup (see
+        `modules/chores/dashboard.py`) - reads the SHARED picker fields (only one such popup
+        is ever open at a time) and persists them onto THIS chore (the row whose Save button
+        was tapped), same per-row targeting `family_dashboard.delete_task` already uses.
+        Rewards have no schedule concept - a no-op, not an error, since nothing in the UI
+        should ever call this on one anyway."""
+        if self._kind != "chore":
+            return
+        from . import crud
+
+        repeat_entity = self._scratch("select", _schedule_repeat_unique_id(self._entry))
+        days_entity = self._scratch("text", _schedule_scratch_unique_id(self._entry))
+        label_to_key = {label: key for key, label in CHORE_REPEATS.items()}
+        repeat = label_to_key.get(repeat_entity.current_option if repeat_entity else None, "days_of_week")
         try:
-            schedule_days = parse_schedule_days_text(raw_value)
+            schedule = tokens_to_schedule(repeat, days_entity.native_value if days_entity else "")
         except ValueError as err:
             raise HomeAssistantError(str(err)) from err
 
-        from . import crud
-
-        await crud.async_update_chore_field(
-            self.hass, self._entry, self._item_id, schedule_days=schedule_days
-        )
-        if scratch_entity:
-            await scratch_entity.async_set_value("")
+        await crud.async_set_chore_schedule(self.hass, self._entry, self._item_id, schedule)
+        if days_entity is not None:
+            await days_entity.async_set_value("")
 
     async def async_delete(self) -> None:
         """Genuinely removes this chore/reward (`family_dashboard.delete_chore`/

@@ -190,81 +190,168 @@ async def test_chore_row_schedule_pill_shows_every_day_or_days(hass: HomeAssista
     assert any("Schedule: Mon, Wed, Fri" in str(c) for c in kiosk_chores)
 
 
-async def test_set_schedule_days_valid_input_persists_and_clears_scratch(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    chores = [{"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}]
-    entry = await _setup_entry(hass, roster, chores=chores)
+NEW_REPEAT = "select.family_dashboard_new_chore_repeat"
+NEW_DAYS = "text.family_dashboard_new_chore_schedule"
+EDIT_REPEAT = "select.family_dashboard_chore_schedule_repeat"
+EDIT_DAYS = "text.family_dashboard_chore_schedule_scratch"
 
+
+async def _select(hass, entity_id, option):
     await hass.services.async_call(
-        "text",
-        "set_value",
-        {"entity_id": "text.family_dashboard_chore_schedule_scratch", "value": "Mon, Wed, Fri"},
-        blocking=True,
-    )
-    await hass.services.async_call(
-        "family_dashboard",
-        "set_chore_schedule_days",
-        {"entity_id": "sensor.family_dashboard_trash"},
-        blocking=True,
+        "select", "select_option", {"entity_id": entity_id, "option": option}, blocking=True
     )
     await hass.async_block_till_done()
 
-    updated = next(c for c in entry.data["chores"] if c["chore_id"] == "trash")
-    assert updated["schedule_days"] == ["monday", "wednesday", "friday"]
-    assert hass.states.get("text.family_dashboard_chore_schedule_scratch").state == ""
 
-
-async def test_set_schedule_days_invalid_input_raises_and_does_not_persist(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    chores = [{"chore_id": "trash", "name": "Trash", "points": 10, "frequency": "daily", "assigned_to": "ada"}]
-    entry = await _setup_entry(hass, roster, chores=chores)
-
-    await hass.services.async_call(
-        "text",
-        "set_value",
-        {"entity_id": "text.family_dashboard_chore_schedule_scratch", "value": "Funday"},
-        blocking=True,
-    )
-    with pytest.raises(HomeAssistantError):
+async def _toggle(hass, entity_id, *values):
+    for value in values:
         await hass.services.async_call(
-            "family_dashboard",
-            "set_chore_schedule_days",
-            {"entity_id": "sensor.family_dashboard_trash"},
-            blocking=True,
+            DOMAIN, "toggle_schedule_day", {"entity_id": entity_id, "value": value}, blocking=True
         )
     await hass.async_block_till_done()
 
-    updated = next(c for c in entry.data["chores"] if c["chore_id"] == "trash")
-    assert "schedule_days" not in updated
 
-
-async def test_add_chore_with_schedule_scratch_field(hass: HomeAssistant):
-    roster = [_member("Ada", "ada")]
-    entry = await _setup_entry(hass, roster)
-
+async def _save_schedule(hass, sensor="sensor.family_dashboard_trash"):
     await hass.services.async_call(
-        "text", "set_value", {"entity_id": "text.family_dashboard_new_chore_name", "value": "Dishes"}, blocking=True
-    )
-    await hass.services.async_call(
-        "select",
-        "select_option",
-        {"entity_id": "select.family_dashboard_new_chore_assigned_to", "option": "Ada"},
-        blocking=True,
-    )
-    await hass.services.async_call(
-        "text",
-        "set_value",
-        {"entity_id": "text.family_dashboard_new_chore_schedule", "value": "Tue, Thu, Sat"},
-        blocking=True,
-    )
-    await hass.services.async_call(
-        "family_dashboard", "add_chore", {"entity_id": "text.family_dashboard_new_chore_name"}, blocking=True
+        DOMAIN, "set_chore_schedule_days", {"entity_id": sensor}, blocking=True
     )
     await hass.async_block_till_done()
 
+
+async def _add_chore(hass):
+    await hass.services.async_call(
+        DOMAIN, "add_chore", {"entity_id": "text.family_dashboard_new_chore_name"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+
+def _trash(entry):
+    return next(c for c in entry.data["chores"] if c["chore_id"] == "trash")
+
+
+_TRASH = {"chore_id": "trash", "name": "Trash", "points": 10, "assigned_to": "ada"}
+
+
+async def test_toggle_schedule_day_adds_and_removes(hass: HomeAssistant):
+    await _setup_entry(hass, [_member("Ada", "ada")])
+
+    await _toggle(hass, NEW_DAYS, "thu", "mon")
+    assert hass.states.get(NEW_DAYS).state == "mon,thu"
+
+    await _toggle(hass, NEW_DAYS, "mon")
+    assert hass.states.get(NEW_DAYS).state == "thu"
+
+
+async def test_toggle_rejects_token_of_other_kind(hass: HomeAssistant):
+    await _setup_entry(hass, [_member("Ada", "ada")])
+    await _select(hass, NEW_REPEAT, "Monthly")
+
+    with pytest.raises(HomeAssistantError):
+        await _toggle(hass, NEW_DAYS, "mon")
+    assert hass.states.get(NEW_DAYS).state == ""
+
+
+async def test_repeat_change_clears_days(hass: HomeAssistant):
+    await _setup_entry(hass, [_member("Ada", "ada")], chores=[{**_TRASH, "repeat": "days_of_week"}])
+
+    await _toggle(hass, NEW_DAYS, "mon", "thu")
+    await _select(hass, NEW_REPEAT, "Monthly")
+    assert hass.states.get(NEW_DAYS).state == ""
+
+    await _toggle(hass, EDIT_DAYS, "sat")
+    await _select(hass, EDIT_REPEAT, "Monthly")
+    assert hass.states.get(EDIT_DAYS).state == ""
+
+
+async def test_load_chore_schedule_fills_scratch(hass: HomeAssistant):
+    chore = {**_TRASH, "repeat": "monthly", "month_days": [1, 15]}
+    await _setup_entry(hass, [_member("Ada", "ada")], chores=[chore])
+
+    await hass.services.async_call(
+        DOMAIN, "load_chore_schedule", {"entity_id": "sensor.family_dashboard_trash"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get(EDIT_REPEAT).state == "Monthly"
+    assert hass.states.get(EDIT_DAYS).state == "1,15"
+
+
+async def test_set_schedule_saves_days_of_week_and_clears_scratch(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=[{**_TRASH, "repeat": "days_of_week"}])
+    await _select(hass, EDIT_REPEAT, "Days of week")
+    await _toggle(hass, EDIT_DAYS, "fri", "mon", "wed")
+
+    await _save_schedule(hass)
+
+    assert _trash(entry)["repeat"] == "days_of_week"
+    assert _trash(entry)["schedule_days"] == ["monday", "wednesday", "friday"]
+    assert hass.states.get(EDIT_DAYS).state == ""
+
+
+async def test_set_schedule_saves_monthly(hass: HomeAssistant):
+    chore = {**_TRASH, "repeat": "days_of_week", "schedule_days": ["monday"]}
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=[chore])
+    await _select(hass, EDIT_REPEAT, "Monthly")
+    await _toggle(hass, EDIT_DAYS, "15", "1")
+
+    await _save_schedule(hass)
+
+    assert _trash(entry)["repeat"] == "monthly"
+    assert _trash(entry)["month_days"] == [1, 15]
+    assert "schedule_days" not in _trash(entry)
+
+
+async def test_set_schedule_monthly_without_days_raises(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=[{**_TRASH, "repeat": "days_of_week"}])
+    await _select(hass, EDIT_REPEAT, "Monthly")
+
+    with pytest.raises(HomeAssistantError, match="at least one day"):
+        await _save_schedule(hass)
+
+    assert _trash(entry) == {**_TRASH, "repeat": "days_of_week"}
+
+
+async def test_add_chore_from_scratch_uses_repeat_and_days(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await hass.services.async_call(
+        "text", "set_value", {"entity_id": "text.family_dashboard_new_chore_name", "value": "Bins"}, blocking=True
+    )
+    await _select(hass, "select.family_dashboard_new_chore_assigned_to", "Ada")
+    await _select(hass, NEW_REPEAT, "Monthly")
+    await _toggle(hass, NEW_DAYS, "1")
+
+    await _add_chore(hass)
+
+    added = next(c for c in entry.data["chores"] if c["name"] == "Bins")
+    assert added["repeat"] == "monthly"
+    assert added["month_days"] == [1]
+    assert hass.states.get(NEW_DAYS).state == ""
+    assert hass.states.get(NEW_REPEAT).state == "Days of week"
+
+
+async def test_add_chore_days_of_week_from_pills(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await hass.services.async_call(
+        "text", "set_value", {"entity_id": "text.family_dashboard_new_chore_name", "value": "Dishes"}, blocking=True
+    )
+    await _toggle(hass, NEW_DAYS, "tue", "thu", "sat")
+
+    await _add_chore(hass)
+
     added = next(c for c in entry.data["chores"] if c["name"] == "Dishes")
     assert added["schedule_days"] == ["tuesday", "thursday", "saturday"]
-    assert hass.states.get("text.family_dashboard_new_chore_schedule").state == ""
+
+
+async def test_add_chore_monthly_without_days_raises(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await hass.services.async_call(
+        "text", "set_value", {"entity_id": "text.family_dashboard_new_chore_name", "value": "Bins"}, blocking=True
+    )
+    await _select(hass, NEW_REPEAT, "Monthly")
+
+    with pytest.raises(HomeAssistantError, match="at least one day"):
+        await _add_chore(hass)
+    assert not any(c["name"] == "Bins" for c in entry.data["chores"])
 
 
 async def test_add_chore_with_blank_schedule_means_every_day(hass: HomeAssistant):

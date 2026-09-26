@@ -147,10 +147,9 @@ add_event:
 add_chore:
   name: Add chore
   description: >-
-    Create a new chore from the Add Chore popup's scratch fields (name, points, frequency,
-    assigned-to, optional schedule), then clears them. No-ops silently if the name field is
-    left blank; an unparsable schedule field falls back to "every day" rather than blocking
-    the add.
+    Create a new chore from the Add Chore popup's scratch fields (name, points, repeat,
+    picked days, assigned-to), then clears them. No-ops silently if the name field is left
+    blank; fails if Monthly is picked with no day of the month.
   target:
     entity:
       domain: text
@@ -169,14 +168,40 @@ add_reward:
 set_chore_schedule_days:
   name: Set chore schedule days
   description: >-
-    Set the targeted chore's optional day-of-week schedule from the shared schedule-edit
-    popup's scratch text field (comma-separated day names or 3-letter abbreviations), then
-    clears it. Leaving the field blank makes the chore visible/claimable every day (no
-    schedule). No-op for rewards.
+    Save the targeted chore's schedule from the shared Edit Schedule popup's Repeat and
+    picked days, then clear the picked days. Days of week with none picked means every day;
+    Monthly needs at least one day. No-op for rewards.
   target:
     entity:
       domain: sensor
       integration: family_dashboard
+
+load_chore_schedule:
+  name: Load chore schedule
+  description: >-
+    Copy the targeted chore's schedule into the shared Edit Schedule popup's Repeat and
+    picked days, so the popup opens showing it. No-op for rewards.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+
+toggle_schedule_day:
+  name: Toggle schedule day
+  description: >-
+    Add or remove one day in a schedule picker (the Add Chore or Edit Schedule popup) - a
+    weekday key (mon..sun) for Days of week, or a day number (1-31) for Monthly.
+  target:
+    entity:
+      domain: text
+      integration: family_dashboard
+  fields:
+    value:
+      name: Day
+      description: A weekday key (mon, tue, ...) or a day of the month (1-31).
+      required: true
+      selector:
+        text:
 
 set_birthdate:
   name: Set birthdate

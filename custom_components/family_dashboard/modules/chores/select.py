@@ -35,6 +35,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
 from . import crud
 from .crud import UNASSIGNED_OPTION
+from .sensor import (
+    _new_chore_repeat_unique_id,
+    _new_chore_schedule_unique_id,
+    _schedule_repeat_unique_id,
+    _schedule_scratch_unique_id,
+)
 from .crud import member_display_name as _member_name
 from .crud import resolve_assigned_to as _resolve_assigned_to
 
@@ -47,6 +53,7 @@ async def async_setup_entry(
     member_names = [m["name"] for m in entry.data[CONF_ROSTER]]
     entities: list = [
         NewChoreRepeatSelect(entry),
+        ChoreScheduleRepeatSelect(entry),
         NewChoreAssignedToSelect(entry, member_names),
         NewRewardAssignedToSelect(entry, member_names),
     ]
@@ -61,19 +68,19 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class NewChoreRepeatSelect(SelectEntity):
-    """Add Chore popup's scratch Repeat field (Days of week / Monthly / One-time) - see
-    `crud.async_create_chore_from_scratch_fields`."""
+class _RepeatScratchSelect(SelectEntity):
+    """A schedule picker's Repeat dropdown (Days of week / Monthly / One-time). Changing it
+    clears the paired days text, since weekday and day-number picks don't carry over."""
 
     _attr_has_entity_name = True
-    _attr_name = "New Chore Repeat"
     _attr_icon = "mdi:calendar-refresh"
     _attr_options = _REPEAT_OPTIONS
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, unique_id: str, days_unique_id: str) -> None:
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_new_chore_repeat"
+        self._attr_unique_id = unique_id
+        self._days_unique_id = days_unique_id
         self._attr_current_option = CHORE_REPEATS["days_of_week"]
 
     @property
@@ -87,6 +94,32 @@ class NewChoreRepeatSelect(SelectEntity):
     async def async_select_option(self, option: str) -> None:
         self._attr_current_option = option
         self.async_write_ha_state()
+        days_entity = crud._entity(self.hass, "text", self._days_unique_id)
+        if days_entity is not None:
+            await days_entity.async_set_value("")
+
+
+class NewChoreRepeatSelect(_RepeatScratchSelect):
+    """Add Chore popup's Repeat - see `crud.async_create_chore_from_scratch_fields`."""
+
+    _attr_name = "New Chore Repeat"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        super().__init__(
+            entry, _new_chore_repeat_unique_id(entry), _new_chore_schedule_unique_id(entry)
+        )
+
+
+class ChoreScheduleRepeatSelect(_RepeatScratchSelect):
+    """Edit Schedule popup's Repeat - shared by every chore's popup (only one is open at a
+    time), pre-filled by `load_chore_schedule` and read by `set_chore_schedule_days`."""
+
+    _attr_name = "Chore Schedule Repeat"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        super().__init__(
+            entry, _schedule_repeat_unique_id(entry), _schedule_scratch_unique_id(entry)
+        )
 
 
 class NewChoreAssignedToSelect(SelectEntity):

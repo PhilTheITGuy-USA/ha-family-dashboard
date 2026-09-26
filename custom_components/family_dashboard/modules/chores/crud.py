@@ -15,12 +15,20 @@ import homeassistant.components.select as select_component
 import homeassistant.components.text as text_component
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
-from ...util import parse_schedule_days_text, slugify_unique
-from .schedule import REPEAT_DAYS_OF_WEEK, REPEAT_MONTHLY
-from .sensor import _deny_reason_unique_id, _task_unique_id
+from ...util import slugify_unique
+from .schedule import REPEAT_DAYS_OF_WEEK, REPEAT_MONTHLY, tokens_to_schedule
+from .sensor import (
+    _deny_reason_unique_id,
+    _new_chore_repeat_unique_id,
+    _new_chore_schedule_unique_id,
+    _task_unique_id,
+)
+
+_SCHEDULE_KEYS = ("repeat", "schedule_days", "month_days")
 
 _COMPONENT_MAP = {
     "text": text_component.DATA_COMPONENT,
@@ -126,6 +134,20 @@ async def async_update_chore_field(hass: HomeAssistant, entry: ConfigEntry, chor
     await _async_persist(hass, entry, **{CONF_CHORES: chores})
 
 
+async def async_set_chore_schedule(
+    hass: HomeAssistant, entry: ConfigEntry, chore_id: str, schedule: dict
+) -> None:
+    """Replace a chore's schedule fields wholesale (unlike `async_update_chore_field`'s
+    merge) so switching e.g. Days of week -> Monthly doesn't leave stale `schedule_days`."""
+    chores = [
+        {**{k: v for k, v in c.items() if k not in _SCHEDULE_KEYS}, **schedule}
+        if c["chore_id"] == chore_id
+        else c
+        for c in entry.data.get(CONF_CHORES, [])
+    ]
+    await _async_persist(hass, entry, **{CONF_CHORES: chores})
+
+
 async def async_update_reward_field(hass: HomeAssistant, entry: ConfigEntry, reward_id: str, **field_updates) -> None:
     rewards = [
         {**r, **field_updates} if r["reward_id"] == reward_id else r
@@ -195,9 +217,9 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
     """
     name_entity = _entity(hass, "text", f"{entry.entry_id}_new_chore_name")
     points_entity = _entity(hass, "number", f"{entry.entry_id}_new_chore_points")
-    repeat_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_repeat")
+    repeat_entity = _entity(hass, "select", _new_chore_repeat_unique_id(entry))
     assigned_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_assigned_to")
-    schedule_entity = _entity(hass, "text", f"{entry.entry_id}_new_chore_schedule")
+    schedule_entity = _entity(hass, "text", _new_chore_schedule_unique_id(entry))
 
     name = ((name_entity.native_value if name_entity else "") or "").strip()
     if not name:
@@ -212,15 +234,12 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
 
     points = int(points_entity.native_value) if points_entity and points_entity.native_value is not None else 5
 
-    # A bad schedule string falls back to "every day" (None) rather than blocking the whole
-    # Add Chore submit - this popup has no error-surfacing path today (a blank name is
-    # already a silent no-op above, same permissive convention).
+    # Monthly with no day picked has nothing to be due on - surfaced as the service call's
+    # error (a toast on the dashboard) rather than stored.
     try:
-        schedule_days = parse_schedule_days_text(
-            schedule_entity.native_value if schedule_entity else None
-        )
-    except ValueError:
-        schedule_days = None
+        schedule = tokens_to_schedule(repeat, schedule_entity.native_value if schedule_entity else "")
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
 
     await async_add_chore(
         hass,
@@ -228,14 +247,18 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
         name=name,
         points=points,
         assigned_to=assigned_to,
-        repeat=repeat,
-        schedule_days=schedule_days,
+        repeat=schedule["repeat"],
+        schedule_days=schedule.get("schedule_days"),
+        month_days=schedule.get("month_days"),
     )
 
     if name_entity:
         await name_entity.async_set_value("")
     if points_entity:
         await points_entity.async_set_native_value(5)
+    if repeat_entity:
+        # Back to the default; selecting a Repeat also clears the days field.
+        await repeat_entity.async_select_option(CHORE_REPEATS[REPEAT_DAYS_OF_WEEK])
     if schedule_entity:
         await schedule_entity.async_set_value("")
 

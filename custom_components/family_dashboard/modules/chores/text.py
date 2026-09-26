@@ -21,15 +21,23 @@ import homeassistant.components.text as text_component
 from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from ...const import CONF_CHORES, CONF_REWARDS, DOMAIN
+from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, DOMAIN
 from . import crud
-from .sensor import _deny_reason_unique_id
+from .schedule import REPEAT_DAYS_OF_WEEK, toggle_token
+from .sensor import (
+    _deny_reason_unique_id,
+    _new_chore_repeat_unique_id,
+    _new_chore_schedule_unique_id,
+    _schedule_repeat_unique_id,
+    _schedule_scratch_unique_id,
+)
 
 DEFAULT_PIN = "1234"
 PIN_LENGTH = 4
@@ -85,6 +93,9 @@ async def async_setup_entry(
     platform.async_register_entity_service("save_new_pin", {}, "async_save_new_pin")
     platform.async_register_entity_service("add_chore", {}, "async_add_chore")
     platform.async_register_entity_service("add_reward", {}, "async_add_reward")
+    platform.async_register_entity_service(
+        "toggle_schedule_day", {vol.Required("value"): cv.string}, "async_toggle_schedule_day"
+    )
 
 
 class FamilyDashboardParentPinText(TextEntity, RestoreEntity):
@@ -287,67 +298,74 @@ class NewChoreNameText(TextEntity):
         await crud.async_create_chore_from_scratch_fields(self.hass, self._entry)
 
 
-class NewChoreScheduleText(TextEntity):
-    """Add Chore popup's optional scratch schedule field - a blank value means "every day"
-    (see `util.parse_schedule_days_text`). Deliberately NOT a `RestoreEntity`, cleared after
-    every submit, same shape as `NewChoreNameText`."""
+class _ScheduleDaysText(TextEntity):
+    """A schedule picker's selected days, as canonical tokens (`mon,thu` or `1,15` - see
+    `schedule.py`). Each pill tap calls `toggle_schedule_day` with its own fixed token; the
+    paired Repeat select decides which kind of token is valid. Deliberately NOT a
+    `RestoreEntity` - picker state is ephemeral."""
 
     _attr_has_entity_name = True
+    _attr_icon = "mdi:calendar-week"
+    _attr_native_max = 100
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry, unique_id: str, repeat_unique_id: str) -> None:
+        self._entry = entry
+        self._attr_unique_id = unique_id
+        self._repeat_unique_id = repeat_unique_id
+        self._attr_native_value = ""
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    async def async_set_value(self, value: str) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+
+    async def async_toggle_schedule_day(self, value: str) -> None:
+        repeat_entity = crud._entity(self.hass, "select", self._repeat_unique_id)
+        label_to_key = {label: key for key, label in CHORE_REPEATS.items()}
+        repeat = label_to_key.get(
+            repeat_entity.current_option if repeat_entity else None, REPEAT_DAYS_OF_WEEK
+        )
+        try:
+            new_value = toggle_token(repeat, self._attr_native_value, value)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self.async_set_value(new_value)
+
+
+class NewChoreScheduleText(_ScheduleDaysText):
+    """Add Chore popup's picked days - cleared after every submit (see
+    `crud.async_create_chore_from_scratch_fields`)."""
+
     _attr_name = "New Chore Schedule"
-    _attr_icon = "mdi:calendar-week"
-    _attr_native_max = 60
-    _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry) -> None:
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_new_chore_schedule"
-        self._attr_native_value = ""
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Family Dashboard",
-            manufacturer="Family Dashboard",
+        super().__init__(
+            entry, _new_chore_schedule_unique_id(entry), _new_chore_repeat_unique_id(entry)
         )
 
-    async def async_set_value(self, value: str) -> None:
-        self._attr_native_value = value
-        self.async_write_ha_state()
 
+class ChoreScheduleScratchText(_ScheduleDaysText):
+    """Shared picked-days field for EVERY existing chore's Edit Schedule popup
+    (`#schedule-{chore_id}` in `modules/chores/dashboard.py`) - one entity, not one per chore,
+    since only one such popup is ever open at a time. Pre-filled by the popup's
+    `load_chore_schedule` open action; the Save button's `set_chore_schedule_days` targets the
+    specific chore's task sensor, so which chore gets updated is decided by which popup's
+    Save was tapped, not by anything stored here."""
 
-class ChoreScheduleScratchText(TextEntity):
-    """Shared scratch field for EVERY existing chore's schedule-edit popup (`#schedule-
-    {chore_id}` in `modules/chores/dashboard.py`) - one entity, not one per chore, since only
-    one such popup is ever open at a time (same reasoning `FamilyDashboardPinEntryText`
-    already applies to its own shared numpad buffer). The Save button's service call
-    (`family_dashboard.set_chore_schedule_days`) targets the specific chore's task sensor, not
-    this entity, so which chore gets updated is determined by which row's Save button was
-    tapped, not by anything stored here. Deliberately NOT a `RestoreEntity` - ephemeral, same
-    as the PIN-entry buffer."""
-
-    _attr_has_entity_name = True
     _attr_name = "Chore Schedule Scratch"
-    _attr_icon = "mdi:calendar-week"
-    _attr_native_max = 60
-    _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry) -> None:
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_chore_schedule_scratch"
-        self._attr_native_value = ""
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Family Dashboard",
-            manufacturer="Family Dashboard",
+        super().__init__(
+            entry, _schedule_scratch_unique_id(entry), _schedule_repeat_unique_id(entry)
         )
-
-    async def async_set_value(self, value: str) -> None:
-        self._attr_native_value = value
-        self.async_write_ha_state()
 
 
 class NewRewardNameText(TextEntity):
