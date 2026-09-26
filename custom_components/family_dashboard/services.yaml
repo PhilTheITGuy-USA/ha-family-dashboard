@@ -31,6 +31,16 @@ adjust_points:
           max: 1000
           mode: box
 
+reset_claim:
+  name: Reset claim
+  description: >-
+    Undo a mistaken claim on a chore or reward, returning it to unclaimed. Only works while
+    the claim is pending review; no reason is needed and nothing is logged.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+
 delete_task:
   name: Delete chore or reward
   description: >-

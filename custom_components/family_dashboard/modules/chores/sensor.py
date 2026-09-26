@@ -16,14 +16,18 @@ actions, since a plain zero-param button can't carry either value. `family_dashb
 delete_task` (zero-param) genuinely removes the chore/reward (see `crud.py`'s module
 docstring for why this is a real `entity_registry.async_remove`, not `hidden_by`).
 
-`frequency` is a display label only in v1 - no once-per-day/week claim-locking. Claiming
-always starts a fresh cycle regardless of prior status (idle/approved/denied all become
-"claimed" again) - see const.py's CHORE_FREQUENCIES docstring.
+Each due day of a chore is its own instance (see `schedule.py`): a chore can only be
+claimed on a day it's due, `claimed_on` records which instance a claim belongs to, and a
+reviewed (approved/denied) chore goes back to `idle` once a newer due day starts - checked at
+local midnight, at startup, and right after a late review. An unreviewed claim is never reset
+by the clock. Rewards have no schedule: an approved reward goes straight back to `idle`.
 
 Re-exported by the top-level `sensor.py` shim (HA requires platform files at the
 integration's top level - see modules/__init__.py's docstring).
 """
 from __future__ import annotations
+
+from datetime import date
 
 import homeassistant.components.sensor as sensor
 import homeassistant.components.text as text_component
@@ -42,6 +46,7 @@ from homeassistant.util import dt as dt_util
 
 from ...const import CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
 from ...util import parse_schedule_days_text
+from .schedule import REPEAT_ONE_TIME, due_day_started_since, is_due
 
 
 def _points_unique_id(entry: ConfigEntry, member_id: str) -> str:
@@ -143,6 +148,7 @@ async def async_setup_entry(
         "adjust_points", {vol.Required("delta"): vol.Coerce(int)}, "async_adjust"
     )
     platform.async_register_entity_service("delete_task", {}, "async_delete")
+    platform.async_register_entity_service("reset_claim", {}, "async_reset_claim")
     platform.async_register_entity_service(
         "set_chore_schedule_days", {}, "async_set_schedule_days"
     )
@@ -222,6 +228,9 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         else:
             attrs["cost"] = item["cost"]
         self._attr_extra_state_attributes = attrs
+        # The date of the chore instance currently claimed/reviewed (chores only).
+        self._claimed_on: date | None = None
+        self._unsub_midnight = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -236,6 +245,64 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state not in (None, "unknown", "unavailable"):
             self._attr_native_value = last_state.state
+            if self._kind == "reward" and last_state.state == "approved":
+                # Approved rewards used to stay "approved" forever.
+                self._attr_native_value = "idle"
+            try:
+                self._claimed_on = date.fromisoformat(last_state.attributes["claimed_on"])
+            except (KeyError, TypeError, ValueError):
+                self._claimed_on = None
+        if self._kind == "chore":
+            # Catches up on any midnight missed while HA was off.
+            self._run_instance_check()
+            self._refresh_schedule_attributes()
+            self._unsub_midnight = async_track_time_change(
+                self.hass, self._handle_midnight, hour=0, minute=0, second=5
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_midnight is not None:
+            self._unsub_midnight()
+            self._unsub_midnight = None
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_midnight(self, _now) -> None:
+        self._run_instance_check()
+        self._refresh_schedule_attributes()
+        self.async_write_ha_state()
+
+    @staticmethod
+    def _today() -> date:
+        return dt_util.now().date()
+
+    def _refresh_schedule_attributes(self) -> None:
+        if self._kind != "chore":
+            return
+        attrs = self._attr_extra_state_attributes
+        attrs["due_today"] = is_due(self._item, self._today())
+        if self._claimed_on is not None:
+            attrs["claimed_on"] = self._claimed_on.isoformat()
+        else:
+            attrs.pop("claimed_on", None)
+
+    def _run_instance_check(self) -> None:
+        """Send a reviewed chore back to `idle` once a newer due day has started than the
+        instance it was claimed for. A claim still awaiting review is never touched."""
+        if self._kind != "chore" or self._attr_native_value not in ("approved", "denied"):
+            return
+        today = self._today()
+        if self._claimed_on is None:
+            # Stuck by the pre-scheduling behaviour (reviewed, no instance date): free a
+            # recurring chore on its next due day.
+            newer_instance = self._item.get("repeat") != REPEAT_ONE_TIME and is_due(
+                self._item, today
+            )
+        else:
+            newer_instance = due_day_started_since(self._item, self._claimed_on, today)
+        if newer_instance:
+            self._attr_native_value = "idle"
+            self._claimed_on = None
 
     def _points_sensor(self) -> FamilyDashboardPointsSensor | None:
         component = self.hass.data.get(sensor.DATA_COMPONENT)
@@ -256,7 +323,20 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         return component.get_entity(entity_id) if entity_id else None
 
     async def async_claim(self) -> None:
+        name = self._item["name"]
+        status = self._attr_native_value
+        if status == "claimed":
+            raise HomeAssistantError(f"'{name}' is already claimed")
+        if status == "approved":
+            raise HomeAssistantError(f"'{name}' is already approved for today")
+        if self._kind == "chore":
+            today = self._today()
+            if not is_due(self._item, today):
+                raise HomeAssistantError(f"'{name}' isn't due today")
+            self._claimed_on = today
+
         self._attr_native_value = "claimed"
+        self._refresh_schedule_attributes()
         self.async_write_ha_state()
 
         # A new review cycle starts with a blank reason, not whatever was typed (or left over)
@@ -281,7 +361,10 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         elif points_sensor is not None:
             await points_sensor.async_adjust(self._item["points"])
 
-        self._attr_native_value = "approved"
+        # A redeemed reward can be redeemed again; an approved chore instance is done.
+        self._attr_native_value = "idle" if self._kind == "reward" else "approved"
+        self._run_instance_check()
+        self._refresh_schedule_attributes()
         self.async_write_ha_state()
 
     async def async_deny(self, reason: str) -> None:
@@ -299,6 +382,17 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
             {"name": f"{member_name} - {self._item['name']}", "message": f"Denied: {reason}"},
         )
         self._attr_native_value = "denied"
+        self._run_instance_check()
+        self._refresh_schedule_attributes()
+        self.async_write_ha_state()
+
+    async def async_reset_claim(self) -> None:
+        """Undo a mistaken claim (Parent Review's Reset) - no reason, no Logbook entry."""
+        if self._attr_native_value != "claimed":
+            raise HomeAssistantError(f"'{self._item['name']}' has no pending claim to reset")
+        self._attr_native_value = "idle"
+        self._claimed_on = None
+        self._refresh_schedule_attributes()
         self.async_write_ha_state()
 
     def _schedule_scratch_entity(self):

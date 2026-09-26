@@ -216,10 +216,11 @@ async def test_reward_approve_deducts_points_and_rejects_insufficient_balance(
         {"entity_id": points_entity, "delta": 25},
         blocking=True,
     )
-    await _press(hass, "button.family_dashboard_movie_night_claim")
+    # The claim is still pending from before - approving it now succeeds.
     await _press(hass, "button.family_dashboard_movie_night_approve")
 
-    assert hass.states.get(reward_entity).state == "approved"
+    # Redeemed rewards go straight back to available.
+    assert hass.states.get(reward_entity).state == "idle"
     assert hass.states.get(points_entity).state == "5"
 
 

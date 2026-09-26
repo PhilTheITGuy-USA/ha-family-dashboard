@@ -120,6 +120,7 @@ async def test_scheduled_chore_tile_is_conditional_per_day(hass: HomeAssistant):
     )
 
 
+@freezegun.freeze_time("2026-09-21 18:00:00")  # a Monday, so Tristan's chore is due
 async def test_same_named_chore_split_across_two_kids_stays_isolated(hass: HomeAssistant):
     roster = [_member("Tristan", "tristan"), _member("Harlee", "harlee")]
     chores = [
