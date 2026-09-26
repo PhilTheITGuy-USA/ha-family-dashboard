@@ -229,10 +229,27 @@ From the Options Flow you can:
 
 ## Chores & Rewards — How It Works
 
+### Schedules
+Each chore repeats on **days of the week** (none picked = every day), on **days of the
+month** (a day a month doesn't have, like the 31st, falls on its last day), or is
+**one-time**. Pick the schedule with the tap-to-select day pills in the Add Chore popup, or
+tap a chore's **Schedule** pill in Manage Chores & Rewards to change it.
+
+Every scheduled day is a fresh chance to do the chore: a chore only shows (and can only be
+claimed) on the days it's due, and once it's approved it becomes available again on its next
+scheduled day. One-time chores stay done once approved.
+
 ### Claim flow
 1. A family member marks a chore as complete — this creates a pending claim
 2. A parent opens Parent Review (PIN-gated) and approves or denies the claim
 3. **Approve:** points are awarded. **Deny:** a reason is required — the member sees why
+4. **Reset:** undoes a claim made by mistake, with no reason needed
+
+A claim that isn't reviewed by the end of the day stays pending — the points still count
+when it's approved later.
+
+Rewards can be redeemed again as soon as a redemption is approved, as long as there are
+enough points.
 
 ### Unassigned chores
 - Household chores with no single owner live in the **Unassigned** bucket

@@ -22,6 +22,7 @@ chained in after `lists` and only shown if at least one roster member selected "
 `["rewards"]` are top-level lists (not per-roster-member fields, unlike Calendar/Lists) -
 see const.py's `CONF_CHORES`/`CONF_REWARDS` docstring for why.
 
-`frequency` is a display label only in v1 - no once-per-day/week claim-locking scheduling,
-per the rebuild plan's positioning (deliberately simpler than ChoreOps/KidsChores).
+Chores are scheduled - days of the week, days of the month, or one-time - and each due day
+is its own claimable instance. See `schedule.py` for the rules and `sensor.py` for how a
+task sensor moves between instances.
 """

@@ -172,10 +172,22 @@ GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum
 ### Chores module specifics
 
 - Chores & Rewards management sits behind the Parent PIN on the Chores tab, not on Settings.
-- The optional per-chore `schedule_days` (absent means every day) is gated UI-only via
-  conditional cards keyed on `sensor.<device>_day_of_week`. There's no backend claim-locking,
-  the same as `frequency`. Splitting a chore across kids means one chore record per kid,
-  because `assigned_to` is fixed per record.
+- A chore's schedule is `repeat` (`days_of_week` / `monthly` / `one_time`) plus
+  `schedule_days` (none = every day) or `month_days` (a day past the month's end falls on its
+  last day). All date logic lives in the HA-free `modules/chores/schedule.py`. Old
+  `frequency` data is upgraded once at setup (`modules/chores/upgrade.py`; weekly with no day
+  becomes Sunday).
+- Each due day is its own instance. The task sensor only allows a claim on a due day, records
+  `claimed_on`, and sends an approved/denied chore back to `idle` once a newer due day
+  starts: at 00:00:05 local, at startup, and right after a late review. A claim awaiting
+  review is never reset by the clock. Approved rewards go straight back to `idle`.
+  `reset_claim` undoes a pending claim.
+- Kid tiles are one conditional per chore: due today (`due_today` attribute) or claimed. The
+  schedule pickers are scratch entities (a Repeat select plus a days text holding tokens like
+  `mon,thu` or `1,15`) toggled by `toggle_schedule_day`. The Edit popup pre-fills via Bubble
+  Card's pop-up `open_action` calling `load_chore_schedule`.
+- Splitting a chore across kids means one chore record per kid, because `assigned_to` is
+  fixed per record.
 
 ### Third-party Lovelace cards
 
