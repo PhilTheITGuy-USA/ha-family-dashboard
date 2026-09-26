@@ -7,12 +7,23 @@ approval doesn't touch another's points).
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    async_mock_service,
+)
 
 from custom_components.family_dashboard.const import DOMAIN
+from custom_components.family_dashboard.modules.chores import crud
+from custom_components.family_dashboard.modules.chores.binary_sensor import (
+    AUTO_LOCK_SECONDS,
+    PARENT_MODE_UNLOCKED_UNTIL,
+)
 
 
 def _member(name, member_id, features=("chores",)):
@@ -276,6 +287,138 @@ async def test_parent_mode_unlock_and_lock(hass: HomeAssistant):
 
     await _press(hass, "button.family_dashboard_lock_parent_mode")
     assert hass.states.get(parent_mode).state == "off"
+
+
+_PARENT_MODE = "binary_sensor.family_dashboard_parent_mode"
+
+
+async def _unlock(hass: HomeAssistant) -> None:
+    await hass.services.async_call(
+        "family_dashboard",
+        "unlock_parent_mode",
+        {"entity_id": _PARENT_MODE, "pin": "1234"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+
+async def _reload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def _advance(hass: HomeAssistant, freezer, seconds: int) -> None:
+    freezer.tick(timedelta(seconds=seconds))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_parent_mode_survives_chore_add_reload(hass: HomeAssistant):
+    """The reported bug: every chore/reward add/edit/delete reloads the entry, which used to
+    drop Parent Mode back to locked."""
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    await crud.async_add_chore(
+        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get(_PARENT_MODE).state == "on"
+
+
+async def test_chore_change_restarts_parent_mode_timer(hass: HomeAssistant, freezer):
+    """Each chore/reward change restarts the full 5 minutes, so a parent working through a
+    batch of edits isn't locked out partway through."""
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    await _advance(hass, freezer, 200)
+    await crud.async_add_chore(
+        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+    )
+    await hass.async_block_till_done()
+
+    # Would have locked at 300s from unlock; the add restarted the clock at 200s.
+    await _advance(hass, freezer, AUTO_LOCK_SECONDS - 1)
+    assert hass.states.get(_PARENT_MODE).state == "on"
+    await _advance(hass, freezer, 2)
+    assert hass.states.get(_PARENT_MODE).state == "off"
+
+
+async def test_chore_change_while_locked_does_not_unlock(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+
+    await crud.async_add_chore(
+        hass, entry, name="Trash", points=10, frequency="daily", assigned_to="ada"
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get(_PARENT_MODE).state == "off"
+    assert entry.entry_id not in hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {})
+
+
+async def test_parent_mode_keeps_remaining_time_across_reload(hass: HomeAssistant, freezer):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    await _advance(hass, freezer, 200)
+    await _reload(hass, entry)
+    assert hass.states.get(_PARENT_MODE).state == "on"
+
+    # 100s were left at reload time, not a fresh 300.
+    await _advance(hass, freezer, 99)
+    assert hass.states.get(_PARENT_MODE).state == "on"
+    await _advance(hass, freezer, 2)
+    assert hass.states.get(_PARENT_MODE).state == "off"
+
+
+async def test_parent_mode_starts_locked_after_restart(hass: HomeAssistant):
+    """A restart empties hass.data - simulate that by dropping the saved expiry."""
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    hass.data.pop(PARENT_MODE_UNLOCKED_UNTIL, None)
+    await _reload(hass, entry)
+
+    assert hass.states.get(_PARENT_MODE).state == "off"
+
+
+async def test_parent_mode_lock_clears_saved_expiry(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+    assert entry.entry_id in hass.data[PARENT_MODE_UNLOCKED_UNTIL]
+
+    await _press(hass, "button.family_dashboard_lock_parent_mode")
+    assert entry.entry_id not in hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {})
+
+    await _reload(hass, entry)
+    assert hass.states.get(_PARENT_MODE).state == "off"
+
+
+async def test_parent_mode_auto_lock_clears_saved_expiry(hass: HomeAssistant, freezer):
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    await _advance(hass, freezer, AUTO_LOCK_SECONDS + 1)
+    assert hass.states.get(_PARENT_MODE).state == "off"
+    assert entry.entry_id not in hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {})
+
+
+async def test_parent_mode_expired_while_unloaded_starts_locked(hass: HomeAssistant, freezer):
+    """Expiry passes while the entry is unloaded (so no timer fires) - the recreated entity
+    must see the stale expiry and stay locked."""
+    entry = await _setup_entry(hass, [_member("Ada", "ada")])
+    await _unlock(hass)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(seconds=AUTO_LOCK_SECONDS + 1))
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(_PARENT_MODE).state == "off"
+    assert entry.entry_id not in hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {})
 
 
 async def _append_digit(hass: HomeAssistant, digit: str) -> None:

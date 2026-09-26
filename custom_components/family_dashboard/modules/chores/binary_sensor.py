@@ -14,6 +14,8 @@ platform sharing needs special handling and this one doesn't).
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 import voluptuous as vol
 import homeassistant.components.text as text_component
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -26,11 +28,29 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from ...const import DOMAIN
 from .text import parent_pin_unique_id
 
 AUTO_LOCK_SECONDS = 300
+
+# hass.data key -> {entry_id: unlock expiry (aware UTC datetime)}. Deliberately its own key,
+# not hass.data[DOMAIN][entry_id]: async_unload_entry pops that, and this has to survive a
+# config-entry reload (every chore/reward CRUD triggers one). It's in-memory only, so an HA
+# restart still always starts locked.
+PARENT_MODE_UNLOCKED_UNTIL = f"{DOMAIN}_parent_mode_unlocked_until"
+
+
+def refresh_parent_mode_expiry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Restart the full auto-lock window if Parent Mode is currently unlocked - called by
+    `crud.py` before each chore/reward change's reload, so a parent working through a batch
+    of edits isn't locked out partway. Never unlocks: a locked or already-expired entry is
+    left alone."""
+    unlocked = hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {})
+    now = dt_util.utcnow()
+    if unlocked.get(entry.entry_id, now) > now:
+        unlocked[entry.entry_id] = now + timedelta(seconds=AUTO_LOCK_SECONDS)
 
 
 PIN_CHANGE_AUTO_CANCEL_SECONDS = 60
@@ -55,6 +75,11 @@ async def async_setup_entry(
 class FamilyDashboardParentModeBinarySensor(BinarySensorEntity, RestoreEntity):
     """Whether parent mode is currently unlocked. Auto-locks after 5 minutes, matching the
     legacy `family_hub_auto_lock_parent` automation exactly.
+
+    Never restores from the recorder, so an HA restart always starts locked. It does resume
+    across a config-entry reload (see `PARENT_MODE_UNLOCKED_UNTIL`), keeping whatever time
+    was left - except a chore/reward change, which restarts the full 5 minutes first
+    (`refresh_parent_mode_expiry`).
     """
 
     _attr_has_entity_name = True
@@ -76,11 +101,31 @@ class FamilyDashboardParentModeBinarySensor(BinarySensorEntity, RestoreEntity):
             manufacturer="Family Dashboard",
         )
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        unlocked_until = self.hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {}).get(
+            self._entry.entry_id
+        )
+        if unlocked_until is None:
+            return
+        remaining = (unlocked_until - dt_util.utcnow()).total_seconds()
+        if remaining <= 0:
+            self._clear_unlocked_until()
+            return
+        self._attr_is_on = True
+        self._autolock_unsub = async_call_later(self.hass, remaining, self._async_auto_lock)
+        self.async_write_ha_state()
+
     async def async_will_remove_from_hass(self) -> None:
+        # Cancel the timer only - the saved expiry stays so the entity recreated by a reload
+        # can resume.
         if self._autolock_unsub is not None:
             self._autolock_unsub()
             self._autolock_unsub = None
         await super().async_will_remove_from_hass()
+
+    def _clear_unlocked_until(self) -> None:
+        self.hass.data.get(PARENT_MODE_UNLOCKED_UNTIL, {}).pop(self._entry.entry_id, None)
 
     def _pin_entity(self):
         component = self.hass.data.get(text_component.DATA_COMPONENT)
@@ -96,6 +141,9 @@ class FamilyDashboardParentModeBinarySensor(BinarySensorEntity, RestoreEntity):
         if pin_entity is None or pin != pin_entity.native_value:
             raise HomeAssistantError("Incorrect parent PIN")
 
+        self.hass.data.setdefault(PARENT_MODE_UNLOCKED_UNTIL, {})[self._entry.entry_id] = (
+            dt_util.utcnow() + timedelta(seconds=AUTO_LOCK_SECONDS)
+        )
         self._attr_is_on = True
         self.async_write_ha_state()
 
@@ -109,11 +157,13 @@ class FamilyDashboardParentModeBinarySensor(BinarySensorEntity, RestoreEntity):
         if self._autolock_unsub is not None:
             self._autolock_unsub()
             self._autolock_unsub = None
+        self._clear_unlocked_until()
         self._attr_is_on = False
         self.async_write_ha_state()
 
     async def _async_auto_lock(self, _now) -> None:
         self._autolock_unsub = None
+        self._clear_unlocked_until()
         self._attr_is_on = False
         self.async_write_ha_state()
 

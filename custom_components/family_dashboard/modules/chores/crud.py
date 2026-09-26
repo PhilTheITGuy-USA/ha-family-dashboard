@@ -64,6 +64,10 @@ def _entity(hass: HomeAssistant, domain: str, unique_id: str):
 
 
 async def _async_persist(hass: HomeAssistant, entry: ConfigEntry, **data_updates) -> None:
+    # Imported locally to avoid a circular import (binary_sensor -> text -> crud).
+    from .binary_sensor import refresh_parent_mode_expiry
+
+    refresh_parent_mode_expiry(hass, entry)
     hass.config_entries.async_update_entry(entry, data={**entry.data, **data_updates})
     await hass.config_entries.async_reload(entry.entry_id)
 
