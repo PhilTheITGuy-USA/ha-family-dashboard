@@ -66,6 +66,11 @@ def _schedule_scratch_unique_id(entry: ConfigEntry) -> str:
     return f"{entry.entry_id}_chore_schedule_scratch"
 
 
+def due_today_unique_id(task_unique_id: str) -> str:
+    """A chore's Due Today binary sensor (modules/chores/binary_sensor.py)."""
+    return f"{task_unique_id}_due_today"
+
+
 def _schedule_repeat_unique_id(entry: ConfigEntry) -> str:
     """The Edit Schedule popup's Repeat select, paired with `_schedule_scratch_unique_id`."""
     return f"{entry.entry_id}_chore_schedule_repeat"
@@ -123,6 +128,7 @@ def member_feature_entity_ids(entry: ConfigEntry, member_id: str) -> list[tuple[
             ("sensor", task_id),
             ("button", f"{task_id}_claim"),
             ("button", f"{task_id}_approve"),
+            ("binary_sensor", due_today_unique_id(task_id)),
             ("text", _deny_reason_unique_id(entry, chore["chore_id"], "chore")),
         ]
     for reward in entry.data.get(CONF_REWARDS, []):
@@ -272,6 +278,10 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
                 self._claimed_on = date.fromisoformat(last_state.attributes["claimed_on"])
             except (KeyError, TypeError, ValueError):
                 self._claimed_on = None
+            if self._kind == "chore" and self._attr_native_value == "claimed" and not self._claimed_on:
+                # Pending since before scheduling existed: count it as today's instance, so
+                # approving it can't reopen today for a second claim.
+                self._claimed_on = self._today()
         if self._kind == "chore":
             # Catches up on any midnight missed while HA was off.
             self._run_instance_check()

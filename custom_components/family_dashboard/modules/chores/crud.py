@@ -26,6 +26,7 @@ from .sensor import (
     _new_chore_repeat_unique_id,
     _new_chore_schedule_unique_id,
     _task_unique_id,
+    due_today_unique_id,
 )
 
 _SCHEDULE_KEYS = ("repeat", "schedule_days", "month_days")
@@ -165,6 +166,7 @@ def chore_field_entity_ids(entry: ConfigEntry, chore_id: str) -> list[tuple[str,
         ("sensor", task_uid),
         ("button", f"{task_uid}_claim"),
         ("button", f"{task_uid}_approve"),
+        ("binary_sensor", due_today_unique_id(task_uid)),
         ("text", f"{entry.entry_id}_{chore_id}_name"),
         ("number", f"{entry.entry_id}_{chore_id}_points"),
         ("select", f"{entry.entry_id}_{chore_id}_assigned_to"),

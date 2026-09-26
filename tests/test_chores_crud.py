@@ -406,3 +406,16 @@ async def test_setup_removes_retired_frequency_selects(hass: HomeAssistant):
 
     assert registry.async_get("select.family_dashboard_trash_frequency") is None
     assert registry.async_get("select.family_dashboard_new_chore_frequency") is None
+
+
+async def test_delete_chore_removes_due_today_sensor(hass: HomeAssistant):
+    roster = [_member("ada", "Ada")]
+    chores = [{"chore_id": "trash", "name": "Trash", "points": 10, "assigned_to": "ada", "repeat": "days_of_week"}]
+    entry = await _setup_entry(hass, roster, chores=chores)
+    registry = er.async_get(hass)
+    assert registry.async_get("binary_sensor.family_dashboard_trash_due_today") is not None
+
+    await crud.async_delete_chore(hass, entry, "trash")
+    await hass.async_block_till_done()
+
+    assert registry.async_get("binary_sensor.family_dashboard_trash_due_today") is None

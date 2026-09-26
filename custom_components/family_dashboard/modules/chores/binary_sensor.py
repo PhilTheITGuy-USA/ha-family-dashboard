@@ -20,17 +20,19 @@ import voluptuous as vol
 import homeassistant.components.text as text_component
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from ...const import DOMAIN
+from ...const import CONF_CHORES, CONF_ROSTER, DOMAIN
+from .schedule import is_due
+from .sensor import _assigned_member_has_chores, _task_unique_id, due_today_unique_id
 from .text import parent_pin_unique_id
 
 AUTO_LOCK_SECONDS = 300
@@ -59,10 +61,16 @@ PIN_CHANGE_AUTO_CANCEL_SECONDS = 60
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    roster_by_id = {member["member_id"]: member for member in entry.data[CONF_ROSTER]}
     async_add_entities(
         [
             FamilyDashboardParentModeBinarySensor(entry),
             FamilyDashboardPinChangeAuthorizedBinarySensor(entry),
+            *(
+                ChoreDueTodayBinarySensor(entry, chore)
+                for chore in entry.data.get(CONF_CHORES, [])
+                if _assigned_member_has_chores(chore, roster_by_id)
+            ),
         ]
     )
 
@@ -224,4 +232,54 @@ class FamilyDashboardPinChangeAuthorizedBinarySensor(BinarySensorEntity):
     async def _async_auto_cancel(self, _now) -> None:
         self._autocancel_unsub = None
         self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class ChoreDueTodayBinarySensor(BinarySensorEntity):
+    """On while its chore is due today (see `schedule.py`) - what the kid chore tiles'
+    visibility condition keys on. A separate entity rather than the task sensor's
+    `due_today` attribute because dashboard conditions only learned to match attributes in
+    HA 2026.5, while plain entity-state conditions work on every supported version.
+    Recomputed at local midnight; a chore edit reloads the entry, which rebuilds it."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:calendar-check"
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry, chore: dict) -> None:
+        self._entry = entry
+        self._chore = chore
+        self._attr_name = f"{chore['name']} Due Today"
+        self._attr_unique_id = due_today_unique_id(
+            _task_unique_id(entry, chore["chore_id"], "chore")
+        )
+        self._unsub_midnight = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    def _update(self) -> None:
+        self._attr_is_on = is_due(self._chore, dt_util.now().date())
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._update()
+        self._unsub_midnight = async_track_time_change(
+            self.hass, self._handle_midnight, hour=0, minute=0, second=5
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_midnight is not None:
+            self._unsub_midnight()
+            self._unsub_midnight = None
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_midnight(self, _now) -> None:
+        self._update()
         self.async_write_ha_state()

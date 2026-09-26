@@ -313,3 +313,33 @@ async def test_monthly_chore_due_on_its_day(hass: HomeAssistant, freezer):
     await _claim(hass)
 
     assert _state(hass).state == "claimed"
+
+
+async def test_pending_claim_from_before_upgrade_is_not_double_paid(hass: HomeAssistant, freezer):
+    """A claim pending when scheduling was installed has no `claimed_on`. Approving it on a
+    due day must close today's instance, not reopen it for a second claim."""
+    await _at(hass, freezer, MON)
+    mock_restore_cache(hass, [State(TASK, "claimed", {})])
+    await _setup(hass)
+
+    await _approve(hass)
+
+    assert _state(hass).state == "approved"
+    assert hass.states.get(POINTS).state == "10"
+    with pytest.raises(HomeAssistantError, match="already approved"):
+        await _claim(hass)
+
+
+DUE = "binary_sensor.family_dashboard_trash_due_today"
+
+
+async def test_due_today_sensor_follows_schedule(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    assert hass.states.get(DUE).state == "on"
+
+    await _midnight(hass, freezer, TUE)
+    assert hass.states.get(DUE).state == "off"
+
+    await _midnight(hass, freezer, THU)
+    assert hass.states.get(DUE).state == "on"

@@ -89,11 +89,14 @@ def _visibility_conditional(cards, sensor):
 
 
 def _shows_when_due_or_claimed(conditional, sensor):
+    # Keyed on the Due Today binary sensor's plain state, not the `due_today` attribute:
+    # attribute matching in dashboard conditions only arrived in HA 2026.5.
+    due = sensor.replace("sensor.", "binary_sensor.", 1) + "_due_today"
     return conditional["conditions"] == [
         {
             "condition": "or",
             "conditions": [
-                {"condition": "state", "entity": sensor, "attribute": "due_today", "state": "true"},
+                {"condition": "state", "entity": due, "state": "on"},
                 {"condition": "state", "entity": sensor, "state": "claimed"},
             ],
         }

@@ -37,8 +37,8 @@ templating in `tap_action.data` (already proven in this file for `async_parent_l
 state-dependent action/color) rather than needing a shared scratch field pre-loaded first.
 
 Chores are scheduled (see `schedule.py`): each chore tile is wrapped in ONE
-`type: conditional` shown while its task sensor's `due_today` attribute is true or its state
-is "claimed" (so a kid still sees a claim waiting for review). Splitting a chore across kids
+`type: conditional` shown while its Due Today binary sensor is on or its task sensor is
+"claimed" (so a kid still sees a claim waiting for review). Splitting a chore across kids
 means one chore record per kid, each with its own schedule - claim/approve/points has no
 "who claimed it today" concept separate from a chore's fixed `assigned_to`.
 
@@ -65,6 +65,7 @@ from .sensor import (
     _schedule_repeat_unique_id,
     _schedule_scratch_unique_id,
     _task_unique_id,
+    due_today_unique_id,
 )
 
 
@@ -145,20 +146,17 @@ def _tile(entity_id: str, name: str, icon: str, tap_target: str | None = None) -
     return card
 
 
-def _due_or_claimed(sensor_id: str, card: dict) -> dict:
-    """Show `card` while the chore is due today or has a claim awaiting review."""
+def _due_or_claimed(sensor_id: str, due_today_id: str, card: dict) -> dict:
+    """Show `card` while the chore is due today or has a claim awaiting review. Keyed on the
+    Due Today binary sensor's plain state rather than the task sensor's `due_today`
+    attribute: attribute matching in dashboard conditions only arrived in HA 2026.5."""
     return {
         "type": "conditional",
         "conditions": [
             {
                 "condition": "or",
                 "conditions": [
-                    {
-                        "condition": "state",
-                        "entity": sensor_id,
-                        "attribute": "due_today",
-                        "state": "true",
-                    },
+                    {"condition": "state", "entity": due_today_id, "state": "on"},
                     {"condition": "state", "entity": sensor_id, "state": "claimed"},
                 ],
             }
@@ -189,10 +187,13 @@ async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: di
             task_uid = _task_unique_id(entry, chore["chore_id"], "chore")
             sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, task_uid)
             claim_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{task_uid}_claim")
+            due_id = ent_reg.async_get_entity_id(
+                "binary_sensor", DOMAIN, due_today_unique_id(task_uid)
+            )
             if not sensor_id:
                 continue
             tile = _tile(sensor_id, chore["name"], "mdi:broom", tap_target=claim_id)
-            cards.append(_due_or_claimed(sensor_id, tile))
+            cards.append(_due_or_claimed(sensor_id, due_id or "", tile))
 
     rewards = [r for r in entry.data.get(CONF_REWARDS, []) if r["assigned_to"] == member["member_id"]]
     if rewards:
