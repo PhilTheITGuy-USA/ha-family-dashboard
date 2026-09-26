@@ -1,6 +1,6 @@
 # Family Dashboard — Setup & Configuration Guide
 
-> **v0.9.0-beta.1** · One wizard. No YAML. No restart.  
+> **v1.1.0** · One wizard. No YAML. No restart.  
 > Calendar · Lists · Chores & Rewards · Settings/Roster
 
 ---
@@ -264,15 +264,15 @@ enough points.
 
 ---
 
-## Known Issues & Beta Notes
+## Known Issues
 
-Family Dashboard is feature-complete against the v1 plan and live-validated end-to-end, but is still in beta (`v0.9.0-beta.1`).
+Family Dashboard is feature-complete against the v1 plan and live-validated end-to-end.
 
 - **ha-family-hub import:** Import from the old package is stubbed but not yet implemented. Manual cleanup of old helpers is required (see [Migrating from ha-family-hub](#migrating-from-ha-family-hub) above).
 - **Meals module:** Intentionally deferred — the feature registry is shaped for it but no UI or entities are created yet.
 - **Holiday regions:** Non-US / non-Philippines regions require manually adding a holiday calendar in HA and mapping it via Reconfigure.
 - **Shared Family calendar not appearing:** Detection requires a `calendar.*` entity named exactly "Family" — if your provider names the entity something else (e.g. after the connected account rather than the calendar's own title), rename it in **Settings → Devices & Services → Entities**, then Reload the Family Dashboard integration. A blank "Name" field on that entity means it's using the provider's default name, not that naming doesn't matter — check the actual `friendly_name` in Developer Tools → States if unsure.
-- **The five Lovelace cards are a manual prerequisite, not bundled:** earlier beta versions bundled these five cards directly so no separate HACS install was needed. Reversed as of this note: none of the five guard against a duplicate registration, so a user who already had any of them installed for their own other dashboards could end up with two competing copies racing to register the same component - unpredictable, and for week-planner-card specifically, capable of silently breaking the Calendar tab's toggle behavior if a different version won that race. See the Prerequisites section above.
+- **The five Lovelace cards are a manual prerequisite, not bundled:** earlier versions bundled these five cards directly so no separate HACS install was needed. Reversed as of this note: none of the five guard against a duplicate registration, so a user who already had any of them installed for their own other dashboards could end up with two competing copies racing to register the same component - unpredictable, and for week-planner-card specifically, capable of silently breaking the Calendar tab's toggle behavior if a different version won that race. See the Prerequisites section above.
 
 Report issues at: [github.com/PhilTheITGuy-USA/ha-family-dashboard/issues](https://github.com/PhilTheITGuy-USA/ha-family-dashboard/issues)
 

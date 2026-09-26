@@ -18,9 +18,9 @@ neither was true on a real install.  Family Dashboard fixes this
 architecturally: every entity is created live, owned directly by this integration - no YAML,
 no restart dependency.
 
-## Status: beta (1.0.1-beta1)
+## Status: stable (1.1.0)
 
-Feature-complete against the v1 plan and live-validated end-to-end, but still in beta.
+Feature-complete against the v1 plan and live-validated end-to-end.
 Setup is a single wizard (Roster → Colors → Avatars → Birthdates → Features → Link HA users →
 Calendar → Lists → Chores & Rewards → Confirm) that provisions everything live, no YAML, no
 restart required for anything it creates.

@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 The `family_dashboard` Home Assistant custom integration (repo: `ha-family-dashboard`,
-installed via HACS). **Status: beta** — feature-complete against the v1 plan, not yet declared
-stable. Deliberately deferred (not gaps): a Meals module, and importing from a legacy
+installed via HACS). **Status: stable** (1.1.0) — feature-complete against the v1 plan.
+Deliberately deferred (not gaps): a Meals module, and importing from a legacy
 `ha-family-hub` install (`migration/` is a stub).
 
 Layout:
@@ -92,9 +92,8 @@ upstream than the live bench runs, so verify HA-core behavior against the live i
 
 ## Releasing
 
-Bump `version` in `custom_components/family_dashboard/manifest.json` (currently in the
-`1.0.x-betaN` series), keep README's "Status:" line in sync, then tag `vX.Y.Z` and publish a
-GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum HA version
+Bump `version` in `custom_components/family_dashboard/manifest.json`, keep README's "Status:" line and SETUP.md's
+version banner in sync, then tag `vX.Y.Z` and publish a GitHub Release (not pre-release). `hacs.json` sets the minimum HA version
 (2024.6.0).
 
 ## Architecture
