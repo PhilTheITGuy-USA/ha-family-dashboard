@@ -1,8 +1,22 @@
 """Platform shim - HA requires platform files at the integration's top level.
 
 Real entity classes live in modules/calendar/datetime.py, grouped there for clarity/module
-ownership. This file just re-exports the module's async_setup_entry. Only Calendar uses this
-platform (unlike text/select/switch/date/number, which also need aggregation for
-Settings/Chores) - a plain 1:1 shim, not an aggregator.
+ownership. This file just delegates to the module's async_setup_entry, pinning entity IDs on
+the way (see entity_ids.py). Only Calendar uses this platform (unlike
+text/select/switch/date/number, which also need aggregation for Settings/Chores) - a plain
+1:1 shim, not an aggregator.
 """
-from .modules.calendar.datetime import async_setup_entry as async_setup_entry  # noqa: F401
+from __future__ import annotations
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .entity_ids import pin_entity_ids
+from .modules.calendar.datetime import async_setup_entry as _module_setup_entry
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    await _module_setup_entry(hass, entry, pin_entity_ids("datetime", async_add_entities))

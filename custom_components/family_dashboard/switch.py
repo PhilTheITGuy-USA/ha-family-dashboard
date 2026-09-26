@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_FEATURES, CONF_ROSTER
+from .entity_ids import pin_entity_ids
 from .modules.calendar.switch import async_setup_entry as _calendar_setup_entry
 from .modules.settings.switch import async_setup_entry as _settings_setup_entry
 
@@ -17,6 +18,7 @@ from .modules.settings.switch import async_setup_entry as _settings_setup_entry
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    async_add_entities = pin_entity_ids("switch", async_add_entities)
     await _settings_setup_entry(hass, entry, async_add_entities)
 
     if any("calendar" in member.get(CONF_FEATURES, []) for member in entry.data[CONF_ROSTER]):

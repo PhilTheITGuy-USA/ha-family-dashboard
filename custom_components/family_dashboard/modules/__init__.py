@@ -8,9 +8,11 @@ subpackage here (`modules/<key>/`) that should contain:
     `CalendarEntity` subclasses and `async_setup_entry`). HA's
     `async_forward_entry_setups` requires platform files at the INTEGRATION'S TOP LEVEL
     (`custom_components/family_dashboard/<platform>.py`), not nested under modules/ - so
-    each module's top-level platform file (e.g. top-level `calendar.py`) is a thin shim:
-    `from .modules.calendar.calendar import async_setup_entry as async_setup_entry`. See
-    `modules/settings/` for the working example of this pattern.
+    each module's top-level platform file (e.g. top-level `calendar.py`) is a thin shim that
+    calls the module's `async_setup_entry` with `async_add_entities` wrapped in
+    `entity_ids.pin_entity_ids` - never pass the raw callback through, or new entities can
+    pick up an area-prefixed ID the dashboard can't find. See `modules/settings/` for the
+    working example of this pattern.
   - (optional) a config-flow step class, for modules that need extra input beyond the
     always-on roster + per-member features-selection steps in `config_flow.py` (e.g.
     Calendar's guided calendar-mapping step, Lists' preset picker). Chain it in from

@@ -122,7 +122,8 @@ GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum
   then builds and registers the dashboard.
 - **`modules/<name>/`** (calendar, lists, chores, settings) hold the real entity logic, and
   each may add a `dashboard.py` and its own flow step. Top-level `<platform>.py` files are thin
-  shims re-exporting the modules' `async_setup_entry`. See `modules/__init__.py`'s docstring
+  shims that call the modules' `async_setup_entry` with `async_add_entities` wrapped in
+  `entity_ids.pin_entity_ids` (see Entity IDs below). See `modules/__init__.py`'s docstring
   for the new-module checklist. `modules/settings/` is the reference pattern.
 - **`dashboard/`**: `registry.py` generates four uniformly labeled tabs
   (Calendar/Lists/Chores/Settings) for every viewer, and a custom strategy
@@ -137,11 +138,17 @@ GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum
 - **`services.yaml`**: declares only the schemas for the custom services the dashboard calls
   (task/points/member management, PIN unlock, the `add_event`/`add_chore`/`add_reward`
   popups). Each module registers its own handlers.
-- **Entity IDs**: `has_entity_name = True` with a shared per-entry device gives
-  `<device>_<name>` IDs (e.g. `select.family_dashboard_ada_color`). If that device is assigned
-  to an HA area before an entity is first registered, HA prefixes the area too
-  (`number.living_room_family_dashboard_...`). New entities must pin `self.entity_id`
-  explicitly in `__init__`.
+- **Entity IDs** are always `<domain>.family_dashboard_<slugified entity name>` (e.g.
+  `select.family_dashboard_ada_color`), and the dashboard hardcodes many of them. Left to
+  itself, HA derives a new entity's ID from the device's area and current name, so once the
+  shared device is assigned to an area or renamed, new entities would come out as
+  `select.living_room_family_dashboard_...` and their cards would break. `entity_ids.py`
+  prevents that: every top-level platform wraps `async_add_entities` in `pin_entity_ids`,
+  which sets each entity's canonical ID from its `_attr_name`, so entity classes don't pin
+  IDs themselves (a class that does set `self.entity_id` keeps it). Setup also runs
+  `async_repair_prefixed_entity_ids` after the platforms load, renaming any
+  `<x>_family_dashboard_<name>` ID back in place so its state carries over. It leaves
+  user-customised IDs alone and won't take an ID that's already in use.
 
 ### Calendar module specifics
 
@@ -178,9 +185,3 @@ install them as a manual HACS prerequisite; SETUP.md lists the tested versions. 
 them: none guard `customElements.define`, so a duplicate copy races and breaks (history in
 `assets.py`/`dashboard/register.py` docstrings). Keep SETUP.md in sync when card versions or
 the Family-calendar naming rule change.
-
-## Known open issues
-
-- Some entities created before the area-prefix pinning fix still carry area-prefixed IDs on
-  existing installs (e.g. `text.living_room_family_dashboard_birthdate_entry`, several Chores
-  scheduling entities). A blanket fix is still to do.

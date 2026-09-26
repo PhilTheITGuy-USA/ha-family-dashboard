@@ -27,6 +27,7 @@ from .assets import async_seed_assets
 from .const import CONF_FEATURES, CONF_ROSTER, DOMAIN, FEATURES, SETTINGS_PLATFORMS
 from .dashboard.register import async_register_dashboard, async_register_strategy_resource
 from .dashboard.registry import async_build_dashboard_config
+from .entity_ids import async_repair_prefixed_entity_ids
 from .holidays_setup import async_ensure_default_holidays
 from .unmapped_users import async_check_unmapped_users
 from .user_watch import async_register_user_change_listener
@@ -80,6 +81,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     platforms = _platforms_for_entry(entry)
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
+
+    # After the platforms load (so each entity is renamed live and keeps its state) and
+    # before the dashboard is built against those IDs - see entity_ids.py.
+    async_repair_prefixed_entity_ids(hass, entry)
 
     # Registered before the dashboard config itself, so the strategy's custom element is
     # already resolvable by the time any browser tries to load a view using it.
