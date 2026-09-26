@@ -237,7 +237,8 @@ tap a chore's **Schedule** pill in Manage Chores & Rewards to change it.
 
 Every scheduled day is a fresh chance to do the chore: a chore only shows (and can only be
 claimed) on the days it's due, and once it's approved it becomes available again on its next
-scheduled day. One-time chores stay done once approved.
+scheduled day. A one-time chore disappears from the family member's view once it's approved
+(it stays listed under Manage Chores & Rewards until a parent deletes it).
 
 ### Claim flow
 1. A family member marks a chore as complete — this creates a pending claim

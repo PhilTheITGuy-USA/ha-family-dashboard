@@ -460,3 +460,24 @@ async def test_add_chore_with_blank_schedule_means_every_day(hass: HomeAssistant
 
     added = next(c for c in entry.data["chores"] if c["name"] == "Trash")
     assert "schedule_days" not in added
+
+
+async def test_one_time_chore_tile_hides_once_approved(hass: HomeAssistant):
+    """A finished one-time chore drops off the kid's view; recurring chores don't need this
+    (they come back on their next due day)."""
+    chores = [
+        {"chore_id": "garage", "name": "Garage", "points": 20, "repeat": "one_time", "assigned_to": "ada"},
+        {"chore_id": "trash", "name": "Trash", "points": 10, "repeat": "days_of_week", "assigned_to": "ada"},
+    ]
+    entry = await _setup_entry(hass, [_member("Ada", "ada")], chores=chores)
+
+    cards = await _member_task_cards(hass, entry, _member("Ada", "ada"))
+
+    garage = _visibility_conditional(cards, "sensor.family_dashboard_garage")
+    assert {
+        "condition": "state",
+        "entity": "sensor.family_dashboard_garage",
+        "state_not": "approved",
+    } in garage["conditions"]
+    trash = _visibility_conditional(cards, "sensor.family_dashboard_trash")
+    assert len(trash["conditions"]) == 1

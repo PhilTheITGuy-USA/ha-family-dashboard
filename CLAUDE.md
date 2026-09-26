@@ -183,7 +183,7 @@ GitHub Release (mark it pre-release while in beta). `hacs.json` sets the minimum
   review is never reset by the clock. Approved rewards go straight back to `idle`.
   `reset_claim` undoes a pending claim.
 - Kid tiles are one conditional per chore: its Due Today binary sensor is on, or it's
-  claimed. Don't switch this to the task sensor's `due_today` attribute: dashboard conditions
+  claimed (one-time chores also hide once approved). Don't switch this to the task sensor's `due_today` attribute: dashboard conditions
   only match attributes from HA 2026.5 on, and the integration supports back to 2024.6. The
   schedule pickers are scratch entities (a Repeat select plus a days text holding tokens like
   `mon,thu` or `1,15`) toggled by `toggle_schedule_day`. The Edit popup pre-fills via Bubble

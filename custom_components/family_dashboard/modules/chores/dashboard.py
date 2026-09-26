@@ -56,7 +56,7 @@ from homeassistant.helpers import entity_registry as er
 
 from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, DOMAIN
 from ..calendar.dashboard import member_avatar_toggle_pill
-from .schedule import WEEKDAY_KEYS, describe
+from .schedule import REPEAT_ONE_TIME, WEEKDAY_KEYS, describe
 from .sensor import (
     _deny_reason_unique_id,
     _new_chore_repeat_unique_id,
@@ -146,10 +146,16 @@ def _tile(entity_id: str, name: str, icon: str, tap_target: str | None = None) -
     return card
 
 
-def _due_or_claimed(sensor_id: str, due_today_id: str, card: dict) -> dict:
+def _due_or_claimed(sensor_id: str, due_today_id: str, card: dict, *, one_time: bool) -> dict:
     """Show `card` while the chore is due today or has a claim awaiting review. Keyed on the
     Due Today binary sensor's plain state rather than the task sensor's `due_today`
-    attribute: attribute matching in dashboard conditions only arrived in HA 2026.5."""
+    attribute: attribute matching in dashboard conditions only arrived in HA 2026.5.
+
+    A one-time chore is always "due", so it also hides once approved - it's finished (a
+    parent can still see and delete it under Manage Chores & Rewards)."""
+    finished = (
+        [{"condition": "state", "entity": sensor_id, "state_not": "approved"}] if one_time else []
+    )
     return {
         "type": "conditional",
         "conditions": [
@@ -159,7 +165,8 @@ def _due_or_claimed(sensor_id: str, due_today_id: str, card: dict) -> dict:
                     {"condition": "state", "entity": due_today_id, "state": "on"},
                     {"condition": "state", "entity": sensor_id, "state": "claimed"},
                 ],
-            }
+            },
+            *finished,
         ],
         "card": card,
     }
@@ -193,7 +200,11 @@ async def _member_task_cards(hass: HomeAssistant, entry: ConfigEntry, member: di
             if not sensor_id:
                 continue
             tile = _tile(sensor_id, chore["name"], "mdi:broom", tap_target=claim_id)
-            cards.append(_due_or_claimed(sensor_id, due_id or "", tile))
+            cards.append(
+                _due_or_claimed(
+                    sensor_id, due_id or "", tile, one_time=chore.get("repeat") == REPEAT_ONE_TIME
+                )
+            )
 
     rewards = [r for r in entry.data.get(CONF_REWARDS, []) if r["assigned_to"] == member["member_id"]]
     if rewards:
