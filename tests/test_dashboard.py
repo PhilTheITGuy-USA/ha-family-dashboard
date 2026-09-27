@@ -1123,13 +1123,28 @@ async def test_kiosk_chores_has_reminders_toggles_and_missed_list(hass):
     assert missed["conditions"] == [
         {"entity": "binary_sensor.family_dashboard_parent_mode", "state": "on"}
     ]
+    # Each row is its own conditional on the entry COUNT (the sensor's state), so a row with
+    # no entry is removed from the stack entirely rather than leaving an empty gap.
     rows = [
         c for c in missed["card"]["cards"]
-        if c.get("tap_action", {}).get("perform_action") == "family_dashboard.dismiss_missed_chore"
+        if c.get("type") == "conditional"
+        and c["card"].get("tap_action", {}).get("perform_action")
+        == "family_dashboard.dismiss_missed_chore"
     ]
     assert len(rows) == 20
-    assert all(r["entity"] == "sensor.family_dashboard_missed_chores" for r in rows)
-    assert "family_dashboard.clear_missed_chores" in json.dumps(missed)
+    assert [r["conditions"] for r in rows] == [
+        [{"condition": "numeric_state", "entity": "sensor.family_dashboard_missed_chores", "above": i}]
+        for i in range(20)
+    ]
+    assert all(r["card"]["entity"] == "sensor.family_dashboard_missed_chores" for r in rows)
+    clear_all = next(
+        c for c in missed["card"]["cards"]
+        if c.get("type") == "conditional"
+        and c["card"].get("tap_action", {}).get("perform_action") == "family_dashboard.clear_missed_chores"
+    )
+    assert clear_all["conditions"] == [
+        {"condition": "numeric_state", "entity": "sensor.family_dashboard_missed_chores", "above": 0}
+    ]
 
     review_index = next(i for i, c in enumerate(kiosk_chores) if "Parent Review" in json.dumps(c))
     assert kiosk_chores.index(missed) == review_index + 1

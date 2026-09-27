@@ -374,12 +374,18 @@ def _missed_entry_js(index: int) -> str:
     return f"((entity && entity.attributes.entries) || [])[{index}]"
 
 
+def _has_more_than(sensor_id: str, count: int) -> list[dict]:
+    """Shown while the list has more than `count` entries. The sensor's STATE is the entry
+    count, so this needs no attribute condition (HA 2026.5+ only), and a hidden conditional
+    card is removed from the stack entirely - no empty gap per unused row (live-measured)."""
+    return [{"condition": "numeric_state", "entity": sensor_id, "above": count}]
+
+
 def _missed_row(sensor_id: str, index: int) -> dict:
-    """Row `index` of the missed list - hidden (display: none) when there's no such entry,
-    since a dashboard condition can't test an attribute before HA 2026.5. Tapping it
-    dismisses that entry; the id is read at tap time, so it's always the row shown."""
+    """Row `index` of the missed list (entries are newest first). Tapping it dismisses that
+    entry; the id is read at tap time, so it's always the row shown."""
     e = _missed_entry_js(index)
-    return {
+    row = {
         "type": "custom:button-card",
         "entity": sensor_id,
         "icon": "mdi:close-circle-outline",
@@ -402,7 +408,6 @@ def _missed_row(sensor_id: str, index: int) -> dict:
         },
         "styles": {
             "card": [
-                {"display": f"[[[ return {e} ? 'block' : 'none'; ]]]"},
                 {"border-radius": "12px"},
                 {"padding": "8px 12px"},
                 {"box-shadow": "none"},
@@ -416,6 +421,7 @@ def _missed_row(sensor_id: str, index: int) -> dict:
             "icon": [{"width": "22px"}],
         },
     }
+    return {"type": "conditional", "conditions": _has_more_than(sensor_id, index), "card": row}
 
 
 async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> dict:
@@ -440,6 +446,8 @@ async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> d
         "entity": sensor_id,
         "name": "Clear all",
         "icon": "mdi:broom",
+        "show_name": True,
+        "show_icon": True,
         "show_state": False,
         "tap_action": {
             "action": "perform-action",
@@ -447,11 +455,12 @@ async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> d
             "target": {"entity_id": sensor_id},
             "confirmation": {"text": "Clear every missed chore?"},
         },
+        # Same shape as `_manage_delete_tile`, which renders at the intended 44px.
         "styles": {
             "card": [
-                {"display": "[[[ return Number(entity && entity.state) > 0 ? 'block' : 'none'; ]]]"},
                 {"border-radius": "16px"},
                 {"height": "44px"},
+                {"padding": "4px 12px 4px 6px"},
                 {"box-shadow": "none"},
             ],
             "grid": [
@@ -460,6 +469,8 @@ async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> d
                 {"align-items": "center"},
                 {"justify-items": "start"},
             ],
+            "icon": [{"width": "18px"}],
+            "name": [{"font-size": "16px"}, {"font-weight": "600"}, {"padding-left": "4px"}],
         },
     }
     return {
@@ -467,7 +478,11 @@ async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> d
         "conditions": [{"entity": _PARENT_MODE, "state": "on"}],
         "card": {
             "type": "vertical-stack",
-            "cards": [header, *(_missed_row(sensor_id, i) for i in range(MISSED_ROWS)), clear_all],
+            "cards": [
+                header,
+                *(_missed_row(sensor_id, i) for i in range(MISSED_ROWS)),
+                {"type": "conditional", "conditions": _has_more_than(sensor_id, 0), "card": clear_all},
+            ],
         },
     }
 
