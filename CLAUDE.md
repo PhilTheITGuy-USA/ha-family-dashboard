@@ -194,7 +194,8 @@ version banner in sync, then tag `vX.Y.Z` and publish a GitHub Release (not pre-
   module's `async_resolve_member_notify_targets`.
 - Missed chores are recorded by each task sensor itself (`_record_missed_days`, at midnight
   and startup, before `_run_instance_check` resets the instance). It scans from its restored
-  `checked_through` date, into a per-entry `Store` (`missed.py`) that's flushed on unload so a
+  `checked_through` date, stopping at startup at the last day it was running (its restored
+  `last_updated`, so a Chores-off stretch or HA outage isn't counted), into a per-entry `Store` (`missed.py`) that's flushed on unload so a
   reload can't read it before a pending save. One-time chores are never recorded. The list's
   card rows are conditionals on the missed sensor's count (its state), not on attributes.
 

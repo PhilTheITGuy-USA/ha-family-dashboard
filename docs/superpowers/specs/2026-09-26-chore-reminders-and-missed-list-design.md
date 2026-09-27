@@ -193,3 +193,9 @@ services. `strings.json`/`translations/en.json` don't change (they don't declare
   pending save.
 - Missed rows are conditionals on the sensor's count (its state), not `display: none`. Hidden
   rows otherwise left about 150px of blank space in the stack (live-measured).
+- **Changed from the approved design:** startup catch-up covers only the days up to the last
+  day the task sensor was running (its restored state's `last_updated`), not every day HA
+  was off. A kid can't claim while HA, or their Chores feature, is off, and turning Chores
+  back on after a week would otherwise list the whole week as missed. A restart across
+  midnight is still caught. Disabled members are never recorded, because their chores aren't
+  shown anywhere.
