@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 The `family_dashboard` Home Assistant custom integration (repo: `ha-family-dashboard`,
-installed via HACS). **Status: stable** (1.1.0) — feature-complete against the v1 plan.
+installed via HACS). **Status: stable** (1.2.0) — feature-complete against the v1 plan.
 Deliberately deferred (not a gap): a Meals module. Importing from a legacy `ha-family-hub`
 install was dropped (not planned).
 

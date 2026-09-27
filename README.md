@@ -18,7 +18,7 @@ neither was true on a real install.  Family Dashboard fixes this
 architecturally: every entity is created live, owned directly by this integration - no YAML,
 no restart dependency.
 
-## Status: stable (1.1.0)
+## Status: stable (1.2.0)
 
 Feature-complete against the v1 plan and live-validated end-to-end.
 Setup is a single wizard (Roster → Colors → Avatars → Birthdates → Features → Link HA users →
@@ -38,7 +38,8 @@ restart required for anything it creates.
   isolated between family members.
 - **Chores & Rewards**: points economy with a claim → approve/deny (reason required) flow,
   PIN-gated Parent Review, and an Unassigned option for shared household chores with no single
-  owner.
+  owner. Optional 4/6/7 PM phone reminders for chores not yet claimed, and a missed-chores list
+  for parents.
 - **Dashboard**: generated and registered automatically - four uniformly-labeled tabs
   (Calendar/Lists/Chores/Settings) for every viewer; the wall-mounted Kiosk sees everyone at
   once with toggle-filter pills, anyone logged in via their own linked HA account sees only

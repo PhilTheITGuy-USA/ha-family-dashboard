@@ -1,6 +1,6 @@
 # Family Dashboard — Setup & Configuration Guide
 
-> **v1.1.0** · One wizard. No YAML. No restart.  
+> **v1.2.0** · One wizard. No YAML. No restart.  
 > Calendar · Lists · Chores & Rewards · Settings/Roster
 
 ---
