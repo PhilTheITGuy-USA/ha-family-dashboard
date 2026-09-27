@@ -1090,3 +1090,46 @@ async def test_unassigned_chore_is_management_only_not_a_chores_tab_column(hass)
     # Gone from Settings entirely.
     kiosk_settings = _view_cards(_views_by_path(config)["settings-kiosk"])
     assert "family_dashboard_dishes_name" not in str(kiosk_settings)
+
+
+async def test_kiosk_chores_has_reminders_toggles_and_missed_list(hass):
+    import json
+
+    await hass.auth.async_create_user(name="Kiosk Account")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "roster": [_member("Ada", "ada", chores=True)],
+            "chores": [{"chore_id": "trash", "name": "Trash", "points": 10, "assigned_to": "ada"}],
+            "rewards": [],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    config = await async_build_dashboard_config(hass, entry)
+    kiosk_chores = _view_cards(_views_by_path(config)["chores-kiosk"])
+    blob = json.dumps(kiosk_chores)
+
+    # Add Chore popup toggle, and the per-chore Reminders pill in the manage list.
+    assert "switch.family_dashboard_new_chore_reminders" in blob
+    assert "switch.family_dashboard_trash_reminders" in blob
+
+    missed = next(
+        c for c in kiosk_chores
+        if c.get("type") == "conditional" and "Missed Chores" in json.dumps(c)
+    )
+    assert missed["conditions"] == [
+        {"entity": "binary_sensor.family_dashboard_parent_mode", "state": "on"}
+    ]
+    rows = [
+        c for c in missed["card"]["cards"]
+        if c.get("tap_action", {}).get("perform_action") == "family_dashboard.dismiss_missed_chore"
+    ]
+    assert len(rows) == 20
+    assert all(r["entity"] == "sensor.family_dashboard_missed_chores" for r in rows)
+    assert "family_dashboard.clear_missed_chores" in json.dumps(missed)
+
+    review_index = next(i for i, c in enumerate(kiosk_chores) if "Parent Review" in json.dumps(c))
+    assert kiosk_chores.index(missed) == review_index + 1

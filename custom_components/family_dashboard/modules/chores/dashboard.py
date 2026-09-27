@@ -366,6 +366,112 @@ async def async_parent_review_card(
     }
 
 
+MISSED_ROWS = 20
+_PARENT_MODE = "binary_sensor.family_dashboard_parent_mode"
+
+
+def _missed_entry_js(index: int) -> str:
+    return f"((entity && entity.attributes.entries) || [])[{index}]"
+
+
+def _missed_row(sensor_id: str, index: int) -> dict:
+    """Row `index` of the missed list - hidden (display: none) when there's no such entry,
+    since a dashboard condition can't test an attribute before HA 2026.5. Tapping it
+    dismisses that entry; the id is read at tap time, so it's always the row shown."""
+    e = _missed_entry_js(index)
+    return {
+        "type": "custom:button-card",
+        "entity": sensor_id,
+        "icon": "mdi:close-circle-outline",
+        "show_icon": True,
+        "show_name": True,
+        "show_state": False,
+        "name": (
+            f"[[[ var e = {e}; if (!e) return ''; "
+            "var d = new Date(e.date + 'T00:00:00'); "
+            "return d.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})"
+            " + ' · ' + e.member_name + ' · ' + e.chore_name + ' · '"
+            " + (e.reason === 'denied' ? 'Denied' : 'Not claimed'); ]]]"
+        ),
+        "tap_action": {
+            "action": "perform-action",
+            "perform_action": "family_dashboard.dismiss_missed_chore",
+            "target": {"entity_id": sensor_id},
+            "data": {"missed_id": f"[[[ var e = {e}; return e ? e.id : ''; ]]]"},
+            "confirmation": {"text": "Dismiss this missed chore?"},
+        },
+        "styles": {
+            "card": [
+                {"display": f"[[[ return {e} ? 'block' : 'none'; ]]]"},
+                {"border-radius": "12px"},
+                {"padding": "8px 12px"},
+                {"box-shadow": "none"},
+            ],
+            "grid": [
+                {"grid-template-areas": "'n i'"},
+                {"grid-template-columns": "1fr 30px"},
+                {"align-items": "center"},
+            ],
+            "name": [{"justify-self": "start"}, {"font-size": "16px"}, {"white-space": "normal"}],
+            "icon": [{"width": "22px"}],
+        },
+    }
+
+
+async def async_missed_chores_card(hass: HomeAssistant, entry: ConfigEntry) -> dict:
+    """The Kiosk bucket's missed-chores list, right under Parent Review and behind the same
+    Parent PIN gate - see `missed.py` for what counts as missed."""
+    sensor_id = (
+        er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_missed_chores")
+        or "sensor.family_dashboard_missed_chores"
+    )
+    header = {
+        "type": "markdown",
+        "content": (
+            f"{{% set n = states('{sensor_id}') | int(0) %}}"
+            "## Missed Chores ({{ n }})\n"
+            "{% if n == 0 %}_No missed chores 🎉_"
+            f"{{% elif n > {MISSED_ROWS} %}}_Showing the latest {MISSED_ROWS} of {{{{ n }}}}. "
+            "Entries drop off after 30 days._{% endif %}"
+        ),
+    }
+    clear_all = {
+        "type": "custom:button-card",
+        "entity": sensor_id,
+        "name": "Clear all",
+        "icon": "mdi:broom",
+        "show_state": False,
+        "tap_action": {
+            "action": "perform-action",
+            "perform_action": "family_dashboard.clear_missed_chores",
+            "target": {"entity_id": sensor_id},
+            "confirmation": {"text": "Clear every missed chore?"},
+        },
+        "styles": {
+            "card": [
+                {"display": "[[[ return Number(entity && entity.state) > 0 ? 'block' : 'none'; ]]]"},
+                {"border-radius": "16px"},
+                {"height": "44px"},
+                {"box-shadow": "none"},
+            ],
+            "grid": [
+                {"grid-template-areas": "'i n'"},
+                {"grid-template-columns": "30px auto"},
+                {"align-items": "center"},
+                {"justify-items": "start"},
+            ],
+        },
+    }
+    return {
+        "type": "conditional",
+        "conditions": [{"entity": _PARENT_MODE, "state": "on"}],
+        "card": {
+            "type": "vertical-stack",
+            "cards": [header, *(_missed_row(sensor_id, i) for i in range(MISSED_ROWS)), clear_all],
+        },
+    }
+
+
 def _pin_digit_button(digit: str, service: str = "family_dashboard.append_pin_digit") -> dict:
     """`service` defaults to the original auto-submit-at-4 unlock service; the PIN-change
     popup passes `family_dashboard.append_pin_digit_raw` instead (plain accumulate, no
@@ -672,12 +778,31 @@ def _schedule_pill(chore: dict, chore_id: str) -> dict:
     }
 
 
+def _reminders_pill(entity_id: str | None) -> dict:
+    """Like `_field_pill`, but tapping flips the chore's Reminders switch in place - an
+    on/off has nothing to pick in a more-info dialog."""
+    entity_id = entity_id or ""
+    return {
+        "type": "custom:button-card",
+        "entity": entity_id,
+        "show_name": True,
+        "show_icon": False,
+        "name": (
+            "[[[ var s = states['" + entity_id + "']; "
+            "return 'Reminders: ' + (s && s.state === 'on' ? 'On' : 'Off'); ]]]"
+        ),
+        "tap_action": {"action": "toggle"},
+        "styles": _MANAGE_FIELD_PILL_STYLE,
+    }
+
+
 def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
     chore_id = chore["chore_id"]
     name_id = ent_reg.async_get_entity_id("text", DOMAIN, f"{entry.entry_id}_{chore_id}_name")
     points_id = ent_reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{chore_id}_points")
     assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_{chore_id}_assigned_to")
     sensor_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{chore_id}_chore")
+    reminders_id = ent_reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_{chore_id}_reminders")
     return {
         "type": "horizontal-stack",
         "cards": [
@@ -685,6 +810,7 @@ def _chore_row(ent_reg, entry: ConfigEntry, chore: dict) -> dict:
             _field_pill("Points", points_id),
             _field_pill("Assigned To", assigned_id),
             _schedule_pill(chore, chore_id),
+            _reminders_pill(reminders_id),
             _manage_delete_tile(sensor_id, chore["name"]),
         ],
     }
@@ -853,6 +979,9 @@ def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
     assigned_id = ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_new_chore_assigned_to") or ""
     repeat_id = ent_reg.async_get_entity_id("select", DOMAIN, _new_chore_repeat_unique_id(entry)) or ""
     days_id = ent_reg.async_get_entity_id("text", DOMAIN, _new_chore_schedule_unique_id(entry)) or ""
+    reminders_id = (
+        ent_reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_new_chore_reminders") or ""
+    )
     return {
         "type": "custom:bubble-card",
         "card_type": "pop-up",
@@ -866,6 +995,7 @@ def _add_chore_popup(ent_reg, entry: ConfigEntry) -> dict:
                     {"entity": name_id, "name": "Name"},
                     {"entity": points_id, "name": "Points"},
                     {"entity": assigned_id, "name": "Assigned To"},
+                    {"entity": reminders_id, "name": "Send reminders"},
                 ],
                 "show_header_toggle": False,
             },
@@ -991,6 +1121,7 @@ async def async_kiosk_chores_cards(
         cards.append({"type": "horizontal-stack", "cards": member_columns})
 
     cards.append(await async_parent_review_card(hass, entry, chores_members))
+    cards.append(await async_missed_chores_card(hass, entry))
     cards.append(await async_chores_rewards_management_card(hass, entry, chores_members))
     cards.append(async_pin_popup_card())
     return cards
