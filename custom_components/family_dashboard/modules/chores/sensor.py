@@ -27,7 +27,7 @@ integration's top level - see modules/__init__.py's docstring).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import homeassistant.components.sensor as sensor
 import homeassistant.components.text as text_component
@@ -45,7 +45,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
-from .missed import MissedChoresLog
+from .missed import RETENTION_DAYS, MissedChoresLog
 from .schedule import (
     REPEAT_ONE_TIME,
     chore_to_tokens,
@@ -160,7 +160,7 @@ async def async_setup_entry(
         if "chores" in member.get(CONF_FEATURES, [])
     ]
     task_sensors = [
-        FamilyDashboardTaskSensor(entry, chore, "chore", roster_by_id)
+        FamilyDashboardTaskSensor(entry, chore, "chore", roster_by_id, missed_log)
         for chore in entry.data.get(CONF_CHORES, [])
         if _assigned_member_has_chores(chore, roster_by_id)
     ] + [
@@ -248,7 +248,14 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry, item: dict, kind: str, roster_by_id: dict) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        item: dict,
+        kind: str,
+        roster_by_id: dict,
+        missed_log: MissedChoresLog | None = None,
+    ) -> None:
         self._entry = entry
         self._item = item
         self._kind = kind
@@ -279,6 +286,11 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         self._attr_extra_state_attributes = attrs
         # The date of the chore instance currently claimed/reviewed (chores only).
         self._claimed_on: date | None = None
+        # The last day already checked for a missed instance (chores only) - see
+        # `_record_missed_days`.
+        self._checked_through: date | None = None
+        self._missed_log = missed_log
+        self._member_name = member_name
         self._unsub_midnight = None
 
     @property
@@ -301,12 +313,17 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
                 self._claimed_on = date.fromisoformat(last_state.attributes["claimed_on"])
             except (KeyError, TypeError, ValueError):
                 self._claimed_on = None
+            try:
+                self._checked_through = date.fromisoformat(last_state.attributes["checked_through"])
+            except (KeyError, TypeError, ValueError):
+                self._checked_through = None
             if self._kind == "chore" and self._attr_native_value == "claimed" and not self._claimed_on:
                 # Pending since before scheduling existed: count it as today's instance, so
                 # approving it can't reopen today for a second claim.
                 self._claimed_on = self._today()
         if self._kind == "chore":
             # Catches up on any midnight missed while HA was off.
+            self._record_missed_days()
             self._run_instance_check()
             self._refresh_schedule_attributes()
             self._unsub_midnight = async_track_time_change(
@@ -321,6 +338,7 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
 
     @callback
     def _handle_midnight(self, _now) -> None:
+        self._record_missed_days()
         self._run_instance_check()
         self._refresh_schedule_attributes()
         self.async_write_ha_state()
@@ -334,10 +352,46 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
             return
         attrs = self._attr_extra_state_attributes
         attrs["due_today"] = is_due(self._item, self._today())
+        if self._checked_through is not None:
+            attrs["checked_through"] = self._checked_through.isoformat()
         if self._claimed_on is not None:
             attrs["claimed_on"] = self._claimed_on.isoformat()
         else:
             attrs.pop("claimed_on", None)
+
+    def _record_miss(self, day: date, reason: str) -> None:
+        if self._missed_log is not None and self._member_id:
+            self._missed_log.add(
+                day=day, chore=self._item, member_name=self._member_name, reason=reason
+            )
+
+    def _record_missed_days(self) -> None:
+        """Log every due day since the last check (through yesterday) that ended with this
+        chore never claimed, or denied and not redone. Runs before `_run_instance_check`, so
+        `claimed_on` still names the instance that was reset. A day after a claim still
+        awaiting review isn't missed: the kid couldn't claim it. One-time chores are due every
+        day until done, so they have no day to miss. A chore with no check yet (new, or the
+        first start with this feature) starts from yesterday - nothing is backfilled."""
+        if self._kind != "chore" or self._item.get("repeat") == REPEAT_ONE_TIME:
+            return
+        today = self._today()
+        yesterday = today - timedelta(days=1)
+        if self._checked_through is None:
+            self._checked_through = yesterday
+            return
+        day = max(
+            self._checked_through + timedelta(days=1), today - timedelta(days=RETENTION_DAYS)
+        )
+        status = self._attr_native_value
+        while day <= yesterday:
+            if is_due(self._item, day):
+                if day == self._claimed_on:
+                    if status == "denied":
+                        self._record_miss(day, "denied")
+                elif not (status == "claimed" and self._claimed_on and day > self._claimed_on):
+                    self._record_miss(day, "not_claimed")
+            day += timedelta(days=1)
+        self._checked_through = yesterday
 
     def _run_instance_check(self) -> None:
         """Send a reviewed chore back to `idle` once a newer due day has started than the
@@ -435,6 +489,9 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
             {"name": f"{member_name} - {self._item['name']}", "message": f"Denied: {reason}"},
         )
         self._attr_native_value = "denied"
+        if self._kind == "chore" and self._claimed_on and self._claimed_on < self._today():
+            # That day was already checked, while the claim was still pending.
+            self._record_miss(self._claimed_on, "denied")
         self._run_instance_check()
         self._refresh_schedule_attributes()
         self.async_write_ha_state()

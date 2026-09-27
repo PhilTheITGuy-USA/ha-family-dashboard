@@ -109,3 +109,141 @@ async def test_dismiss_and_clear(hass: HomeAssistant, freezer, hass_storage):
     await hass.services.async_call(DOMAIN, "clear_missed_chores", {"entity_id": MISSED}, blocking=True)
     await hass.async_block_till_done()
     assert hass.states.get(MISSED).state == "0"
+
+
+async def _press(hass, entity_id):
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    await hass.async_block_till_done()
+
+
+async def _deny(hass):
+    await hass.services.async_call(
+        DOMAIN, "deny_task", {"entity_id": TASK, "reason": "Not done"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+
+async def test_never_claimed_is_recorded_next_midnight(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == [("2026-09-21", "Trash", "not_claimed")]
+
+
+async def test_claimed_and_approved_is_not_missed(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+    await _press(hass, "button.family_dashboard_trash_approve")
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == []
+
+
+async def test_denied_same_day_is_recorded_next_midnight(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+    await _deny(hass)
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == [("2026-09-21", "Trash", "denied")]
+
+
+async def test_denied_then_redone_is_not_missed(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+    await _deny(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+    await _press(hass, "button.family_dashboard_trash_approve")
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == []
+
+
+async def test_pending_at_midnight_then_denied_late(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+
+    await _midnight(hass, freezer, TUE)
+    assert _summary(hass) == []
+
+    await _at(hass, freezer, WED)
+    await _deny(hass)
+    assert _summary(hass) == [("2026-09-21", "Trash", "denied")]
+
+
+async def test_pending_claim_blocks_later_due_day(hass: HomeAssistant, freezer):
+    """Claimed Monday, not reviewed until Friday - the kid couldn't claim Thursday."""
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _press(hass, "button.family_dashboard_trash_claim")
+
+    await _midnight(hass, freezer, FRI)
+
+    assert _summary(hass) == []
+
+
+async def test_startup_catches_up_only_due_days(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, FRI)
+    mock_restore_cache(hass, [State(TASK, "idle", {"checked_through": "2026-09-20"})])
+
+    await _setup(hass)
+
+    assert _summary(hass) == [
+        ("2026-09-24", "Trash", "not_claimed"),
+        ("2026-09-21", "Trash", "not_claimed"),
+    ]
+
+
+async def test_first_start_does_not_backfill(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, FRI)
+    await _setup(hass)
+
+    assert _summary(hass) == []
+    assert hass.states.get(TASK).attributes["checked_through"] == "2026-09-24"
+
+
+async def test_monthly_chore_respects_its_day(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass, chores=[_chore(repeat="monthly", month_days=[22], schedule_days=None)])
+
+    await _midnight(hass, freezer, WED)
+
+    assert _summary(hass) == [("2026-09-22", "Trash", "not_claimed")]
+
+
+async def test_one_time_chore_is_never_recorded(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass, chores=[_chore(repeat="one_time", schedule_days=None)])
+
+    await _midnight(hass, freezer, WED)
+
+    assert _summary(hass) == []
+
+
+async def test_unassigned_chore_is_never_recorded(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass, chores=[_chore(assigned_to=None)])
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == []
+
+
+async def test_entries_survive_deleting_the_chore(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    await _setup(hass)
+    await _midnight(hass, freezer, TUE)
+
+    await hass.services.async_call(DOMAIN, "delete_task", {"entity_id": TASK}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert _summary(hass) == [("2026-09-21", "Trash", "not_claimed")]

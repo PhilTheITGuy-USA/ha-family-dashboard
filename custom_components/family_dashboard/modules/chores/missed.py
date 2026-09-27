@@ -36,6 +36,11 @@ class MissedChoresLog:
         if self._prune():
             self._save()
 
+    async def async_flush(self) -> None:
+        """Write now, instead of after the save delay - called on unload, so a reload (which
+        every chore edit triggers) doesn't load the file before a pending change is saved."""
+        await self._store.async_save({"entries": self._entries})
+
     @property
     def entries(self) -> list[dict]:
         """Newest first; within a day, by kid then chore."""
