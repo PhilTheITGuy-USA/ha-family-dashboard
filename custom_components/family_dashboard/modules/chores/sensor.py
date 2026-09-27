@@ -44,7 +44,15 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from ...const import (
+    CHORE_REPEATS,
+    CONF_CHORES,
+    CONF_DISABLED,
+    CONF_FEATURES,
+    CONF_REWARDS,
+    CONF_ROSTER,
+    DOMAIN,
+)
 from .missed import RETENTION_DAYS, MissedChoresLog
 from .schedule import (
     REPEAT_ONE_TIME,
@@ -289,6 +297,9 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         # The last day already checked for a missed instance (chores only) - see
         # `_record_missed_days`.
         self._checked_through: date | None = None
+        # The last local day this sensor was running (its restored state's last write) -
+        # startup catch-up stops there. See `_record_missed_days`.
+        self._last_running_day: date | None = None
         self._missed_log = missed_log
         self._member_name = member_name
         self._unsub_midnight = None
@@ -317,13 +328,14 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
                 self._checked_through = date.fromisoformat(last_state.attributes["checked_through"])
             except (KeyError, TypeError, ValueError):
                 self._checked_through = None
+            self._last_running_day = dt_util.as_local(last_state.last_updated).date()
             if self._kind == "chore" and self._attr_native_value == "claimed" and not self._claimed_on:
                 # Pending since before scheduling existed: count it as today's instance, so
                 # approving it can't reopen today for a second claim.
                 self._claimed_on = self._today()
         if self._kind == "chore":
             # Catches up on any midnight missed while HA was off.
-            self._record_missed_days()
+            self._record_missed_days(until=self._last_running_day)
             self._run_instance_check()
             self._refresh_schedule_attributes()
             self._unsub_midnight = async_track_time_change(
@@ -359,19 +371,30 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         else:
             attrs.pop("claimed_on", None)
 
+    def _member_disabled(self) -> bool:
+        member = next(
+            (m for m in self._entry.data[CONF_ROSTER] if m["member_id"] == self._member_id), None
+        )
+        return bool(member and member.get(CONF_DISABLED))
+
     def _record_miss(self, day: date, reason: str) -> None:
-        if self._missed_log is not None and self._member_id:
+        # A disabled member's chores aren't shown anywhere, so they can't be claimed.
+        if self._missed_log is not None and self._member_id and not self._member_disabled():
             self._missed_log.add(
                 day=day, chore=self._item, member_name=self._member_name, reason=reason
             )
 
-    def _record_missed_days(self) -> None:
+    def _record_missed_days(self, until: date | None = None) -> None:
         """Log every due day since the last check (through yesterday) that ended with this
         chore never claimed, or denied and not redone. Runs before `_run_instance_check`, so
         `claimed_on` still names the instance that was reset. A day after a claim still
         awaiting review isn't missed: the kid couldn't claim it. One-time chores are due every
         day until done, so they have no day to miss. A chore with no check yet (new, or the
-        first start with this feature) starts from yesterday - nothing is backfilled."""
+        first start with this feature) starts from yesterday - nothing is backfilled.
+
+        At startup `until` is the last day this sensor was running: days after it (HA off, or
+        Chores turned off for the kid) couldn't be claimed either, so they're skipped. A
+        restart across midnight still catches yesterday - the sensor ran then."""
         if self._kind != "chore" or self._item.get("repeat") == REPEAT_ONE_TIME:
             return
         today = self._today()
@@ -382,8 +405,9 @@ class FamilyDashboardTaskSensor(SensorEntity, RestoreEntity):
         day = max(
             self._checked_through + timedelta(days=1), today - timedelta(days=RETENTION_DAYS)
         )
+        last = yesterday if until is None else min(yesterday, until)
         status = self._attr_native_value
-        while day <= yesterday:
+        while day <= last:
             if is_due(self._item, day):
                 if day == self._claimed_on:
                     if status == "denied":

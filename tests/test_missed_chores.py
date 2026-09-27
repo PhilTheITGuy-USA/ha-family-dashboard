@@ -191,9 +191,17 @@ async def test_pending_claim_blocks_later_due_day(hass: HomeAssistant, freezer):
     assert _summary(hass) == []
 
 
+def _local(day, hour=12):
+    return datetime(2026, 9, day, hour, tzinfo=dt_util.get_default_time_zone())
+
+
 async def test_startup_catches_up_only_due_days(hass: HomeAssistant, freezer):
+    """HA ran through Thursday (last write Thu), restarted Friday - catches Mon and Thu."""
     await _at(hass, freezer, FRI)
-    mock_restore_cache(hass, [State(TASK, "idle", {"checked_through": "2026-09-20"})])
+    mock_restore_cache(
+        hass,
+        [State(TASK, "idle", {"checked_through": "2026-09-20"}, last_updated=_local(THU))],
+    )
 
     await _setup(hass)
 
@@ -247,3 +255,34 @@ async def test_entries_survive_deleting_the_chore(hass: HomeAssistant, freezer):
     await hass.async_block_till_done()
 
     assert _summary(hass) == [("2026-09-21", "Trash", "not_claimed")]
+
+
+async def test_startup_skips_days_the_sensor_was_not_running(hass: HomeAssistant, freezer):
+    """Last written Monday (Chores off for the kid, or HA off, since) - Thursday wasn't
+    claimable, so it isn't missed; Monday was a running day and is."""
+    await _at(hass, freezer, FRI)
+    mock_restore_cache(
+        hass,
+        [State(TASK, "idle", {"checked_through": "2026-09-20"}, last_updated=_local(MON))],
+    )
+
+    await _setup(hass)
+
+    assert _summary(hass) == [("2026-09-21", "Trash", "not_claimed")]
+    assert hass.states.get(TASK).attributes["checked_through"] == "2026-09-24"
+
+
+async def test_disabled_member_is_never_recorded(hass: HomeAssistant, freezer):
+    await _at(hass, freezer, MON)
+    entry = MockConfigEntry(
+        version=1, domain=DOMAIN, title="Family Dashboard", entry_id=ENTRY_ID,
+        data={"roster": [{**_member(), "disabled": True}], "chores": [_chore()], "rewards": []},
+        source="user", unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _midnight(hass, freezer, TUE)
+
+    assert _summary(hass) == []
