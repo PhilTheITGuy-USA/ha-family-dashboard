@@ -189,6 +189,14 @@ version banner in sync, then tag `vX.Y.Z` and publish a GitHub Release (not pre-
   Card's pop-up `open_action` calling `load_chore_schedule`.
 - Splitting a chore across kids means one chore record per kid, because `assigned_to` is
   fixed per record.
+- Reminders (`modules/chores/reminders.py`) fire at 16/18/19:00 for chores with
+  `reminders` set that are due today and `idle`/`denied`. Phones are resolved by the Calendar
+  module's `async_resolve_member_notify_targets`.
+- Missed chores are recorded by each task sensor itself (`_record_missed_days`, at midnight
+  and startup, before `_run_instance_check` resets the instance). It scans from its restored
+  `checked_through` date, into a per-entry `Store` (`missed.py`) that's flushed on unload so a
+  reload can't read it before a pending save. One-time chores are never recorded. The list's
+  card rows are conditionals on the missed sensor's count (its state), not on attributes.
 
 ### Third-party Lovelace cards
 

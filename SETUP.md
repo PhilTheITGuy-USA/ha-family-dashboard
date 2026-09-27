@@ -252,6 +252,23 @@ when it's approved later.
 Rewards can be redeemed again as soon as a redemption is approved, as long as there are
 enough points.
 
+### Chore reminders
+Turn on **Send reminders** when adding a chore, or tap an existing chore's **Reminders**
+pill under Manage Chores & Rewards. At **4 PM, 6 PM and 7 PM**, each family member gets one
+phone notification listing their chores that are due today and not claimed yet (a denied
+chore counts as not done, so it's reminded too). Nothing is sent once everything is claimed.
+
+Reminders only go to a member who has a phone: they must be linked to an HA user who has the
+Home Assistant Companion App installed, or have a notify entity mapped on the Settings tab.
+Unassigned chores are never reminded.
+
+### Missed chores
+Under Parent Review (PIN-gated) on the Kiosk Chores tab, **Missed Chores** lists every
+scheduled day that ended with a chore **not claimed**, or **denied** and not redone. A claim
+still waiting for review isn't counted as missed. One-time chores have no set day, so they
+never appear here. Entries drop off after 30 days. Tap an entry to dismiss it, or use
+**Clear all**. Days before this feature was installed aren't counted.
+
 ### Unassigned chores
 - Household chores with no single owner live in the **Unassigned** bucket
 - Any family member can claim an Unassigned chore

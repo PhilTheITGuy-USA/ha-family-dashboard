@@ -1,6 +1,6 @@
 # Chore reminders and the missed-chores list — design
 
-Date: 2026-09-26. Status: approved in conversation, pending spec review.
+Date: 2026-09-26. Status: approved; implemented. See "Refinements during implementation" at the end.
 
 ## Problem
 
@@ -178,3 +178,18 @@ Live bench:
 SETUP.md gets a "Chore reminders" note (it needs the Companion App on a linked HA user, or a
 manual notify mapping) and a "Missed chores" note. `services.yaml` declares the two new
 services. `strings.json`/`translations/en.json` don't change (they don't declare services).
+
+## Refinements during implementation
+
+- A due day after a claim that's still awaiting review isn't missed: the kid couldn't claim it.
+- A denial is recorded by the midnight scan (or immediately, when a late review denies a day
+  that's already over), not when the instance resets. For a Mon/Thu chore, the reset only
+  happens on Thursday.
+- One-time chores are never recorded as missed. `is_due` is true every day until they're done,
+  so they have no day to miss. They are still reminded.
+- The dismiss service field is `missed_id`. The Add popup's scratch switch isn't restored
+  across restarts, which matches the other scratch fields.
+- The log is flushed on unload, so the reload after a chore edit can't load it before a
+  pending save.
+- Missed rows are conditionals on the sensor's count (its state), not `display: none`. Hidden
+  rows otherwise left about 150px of blank space in the stack (live-measured).
