@@ -41,6 +41,30 @@ reset_claim:
       domain: sensor
       integration: family_dashboard
 
+dismiss_missed_chore:
+  name: Dismiss missed chore
+  description: >-
+    Remove one entry from the missed-chores list (a parent has dealt with it).
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+  fields:
+    missed_id:
+      name: Missed entry ID
+      description: The entry's `id` from the Missed Chores sensor's `entries` attribute.
+      required: true
+      selector:
+        text:
+
+clear_missed_chores:
+  name: Clear missed chores
+  description: Remove every entry from the missed-chores list.
+  target:
+    entity:
+      domain: sensor
+      integration: family_dashboard
+
 delete_task:
   name: Delete chore or reward
   description: >-

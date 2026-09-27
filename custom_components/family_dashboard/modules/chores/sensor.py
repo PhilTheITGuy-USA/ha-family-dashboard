@@ -45,6 +45,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from ...const import CHORE_REPEATS, CONF_CHORES, CONF_FEATURES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from .missed import MissedChoresLog
 from .schedule import (
     REPEAT_ONE_TIME,
     chore_to_tokens,
@@ -149,6 +150,10 @@ async def async_setup_entry(
 ) -> None:
     roster_by_id = {member["member_id"]: member for member in entry.data[CONF_ROSTER]}
 
+    missed_log = MissedChoresLog(hass, entry.entry_id)
+    await missed_log.async_load()
+    hass.data[DOMAIN][entry.entry_id]["missed_log"] = missed_log
+
     points_sensors = [
         FamilyDashboardPointsSensor(entry, member)
         for member in entry.data[CONF_ROSTER]
@@ -163,7 +168,14 @@ async def async_setup_entry(
         for reward in entry.data.get(CONF_REWARDS, [])
         if _assigned_member_has_chores(reward, roster_by_id)
     ]
-    async_add_entities([*points_sensors, *task_sensors, FamilyDashboardDayOfWeekSensor(entry)])
+    async_add_entities(
+        [
+            *points_sensors,
+            *task_sensors,
+            FamilyDashboardDayOfWeekSensor(entry),
+            MissedChoresSensor(entry, missed_log),
+        ]
+    )
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -178,6 +190,10 @@ async def async_setup_entry(
         "set_chore_schedule_days", {}, "async_set_schedule_days"
     )
     platform.async_register_entity_service("load_chore_schedule", {}, "async_load_schedule")
+    platform.async_register_entity_service(
+        "dismiss_missed_chore", {vol.Required("missed_id"): cv.string}, "async_dismiss"
+    )
+    platform.async_register_entity_service("clear_missed_chores", {}, "async_clear")
 
     # Local import - reminders.py imports `_task_unique_id` from this module.
     from .reminders import async_start_chore_reminders
@@ -545,3 +561,49 @@ class FamilyDashboardDayOfWeekSensor(SensorEntity):
     def _handle_midnight(self, _now) -> None:
         self._attr_native_value = self._today_name()
         self.async_write_ha_state()
+
+
+_MISSED_ATTRIBUTE_CAP = 50
+
+
+class MissedChoresSensor(SensorEntity):
+    """The missed-chores list (see `missed.py`) - state is how many entries there are,
+    `entries` the newest `_MISSED_ATTRIBUTE_CAP` of them for the Parent view's list card.
+    `entries` is kept out of the recorder, since the whole list changes nightly."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Missed Chores"
+    _attr_icon = "mdi:calendar-remove"
+    _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"entries"})
+
+    def __init__(self, entry: ConfigEntry, log: MissedChoresLog) -> None:
+        self._entry = entry
+        self._log = log
+        self._attr_unique_id = f"{entry.entry_id}_missed_chores"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Family Dashboard",
+            manufacturer="Family Dashboard",
+        )
+
+    @property
+    def native_value(self) -> int:
+        return len(self._log.entries)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"entries": self._log.entries[:_MISSED_ATTRIBUTE_CAP]}
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._log.async_add_listener(self.async_write_ha_state))
+
+    async def async_dismiss(self, missed_id: str) -> None:
+        self._log.dismiss(missed_id)
+
+    async def async_clear(self) -> None:
+        self._log.clear()
