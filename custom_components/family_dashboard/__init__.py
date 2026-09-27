@@ -124,6 +124,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data = hass.data[DOMAIN].pop(entry.entry_id, {})
         if reminder_unsub := domain_data.get("reminder_unsub"):
             reminder_unsub()
+        if chore_reminder_unsub := domain_data.get("chore_reminder_unsub"):
+            chore_reminder_unsub()
         if user_change_unsub := domain_data.get("user_change_unsub"):
             user_change_unsub()
     return unloaded

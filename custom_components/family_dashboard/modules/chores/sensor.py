@@ -179,6 +179,13 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service("load_chore_schedule", {}, "async_load_schedule")
 
+    # Local import - reminders.py imports `_task_unique_id` from this module.
+    from .reminders import async_start_chore_reminders
+
+    hass.data[DOMAIN][entry.entry_id]["chore_reminder_unsub"] = async_start_chore_reminders(
+        hass, entry
+    )
+
 
 class FamilyDashboardPointsSensor(SensorEntity, RestoreEntity):
     """One roster member's running points total."""
