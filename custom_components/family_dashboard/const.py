@@ -108,7 +108,8 @@ FEATURES: dict[str, dict] = {
         # "select"/"number" added for live Add/Modify/Delete of chores/rewards from the
         # Settings dashboard (points/cost, repeat, assigned-to fields) - see
         # modules/chores/select.py's and modules/chores/number.py's own module docstrings.
-        "platforms": ["sensor", "button", "text", "binary_sensor", "select", "number"],
+        # "switch" is each chore's Reminders toggle (modules/chores/switch.py).
+        "platforms": ["sensor", "button", "text", "binary_sensor", "select", "number", "switch"],
         "default_selected": True,
         "implemented": True,
     },

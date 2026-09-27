@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import homeassistant.components.number as number_component
 import homeassistant.components.select as select_component
+import homeassistant.components.switch as switch_component
 import homeassistant.components.text as text_component
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,7 @@ _COMPONENT_MAP = {
     "text": text_component.DATA_COMPONENT,
     "number": number_component.DATA_COMPONENT,
     "select": select_component.DATA_COMPONENT,
+    "switch": switch_component.DATA_COMPONENT,
 }
 
 # A chore/reward can genuinely have no owner (explicit user request) - this sentinel is the
@@ -92,6 +94,7 @@ async def async_add_chore(
     repeat: str = REPEAT_DAYS_OF_WEEK,
     schedule_days: list[str] | None = None,
     month_days: list[int] | None = None,
+    reminders: bool = False,
 ) -> str:
     """Store a new chore. `schedule_days` only applies to `days_of_week` (absent = every
     day) and `month_days` only to `monthly` - see `schedule.py`."""
@@ -109,6 +112,8 @@ async def async_add_chore(
         new_chore["schedule_days"] = schedule_days
     if repeat == REPEAT_MONTHLY:
         new_chore["month_days"] = month_days or []
+    if reminders:
+        new_chore["reminders"] = True
     chores = [*entry.data.get(CONF_CHORES, []), new_chore]
     await _async_persist(hass, entry, **{CONF_CHORES: chores})
     return chore_id
@@ -159,7 +164,7 @@ async def async_update_reward_field(hass: HomeAssistant, entry: ConfigEntry, rew
 
 def chore_field_entity_ids(entry: ConfigEntry, chore_id: str) -> list[tuple[str, str]]:
     """(domain, unique_id) pairs for everything belonging to one chore - the task sensor, its
-    claim/approve buttons, and its four per-item edit fields. Used by `async_delete_chore` to
+    claim/approve buttons, and its per-item edit fields. Used by `async_delete_chore` to
     genuinely remove all of them from the entity registry."""
     task_uid = _task_unique_id(entry, chore_id, "chore")
     return [
@@ -170,6 +175,7 @@ def chore_field_entity_ids(entry: ConfigEntry, chore_id: str) -> list[tuple[str,
         ("text", f"{entry.entry_id}_{chore_id}_name"),
         ("number", f"{entry.entry_id}_{chore_id}_points"),
         ("select", f"{entry.entry_id}_{chore_id}_assigned_to"),
+        ("switch", f"{entry.entry_id}_{chore_id}_reminders"),
         ("text", _deny_reason_unique_id(entry, chore_id, "chore")),
     ]
 
@@ -222,6 +228,8 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
     repeat_entity = _entity(hass, "select", _new_chore_repeat_unique_id(entry))
     assigned_entity = _entity(hass, "select", f"{entry.entry_id}_new_chore_assigned_to")
     schedule_entity = _entity(hass, "text", _new_chore_schedule_unique_id(entry))
+    # A literal unique_id rather than switch.py's builder - switch.py imports this module.
+    reminders_entity = _entity(hass, "switch", f"{entry.entry_id}_new_chore_reminders")
 
     name = ((name_entity.native_value if name_entity else "") or "").strip()
     if not name:
@@ -252,6 +260,7 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
         repeat=schedule["repeat"],
         schedule_days=schedule.get("schedule_days"),
         month_days=schedule.get("month_days"),
+        reminders=bool(reminders_entity and reminders_entity.is_on),
     )
 
     if name_entity:
@@ -263,6 +272,8 @@ async def async_create_chore_from_scratch_fields(hass: HomeAssistant, entry: Con
         await repeat_entity.async_select_option(CHORE_REPEATS[REPEAT_DAYS_OF_WEEK])
     if schedule_entity:
         await schedule_entity.async_set_value("")
+    if reminders_entity:
+        await reminders_entity.async_turn_off()
 
 
 async def async_create_reward_from_scratch_fields(hass: HomeAssistant, entry: ConfigEntry) -> None:

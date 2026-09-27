@@ -419,3 +419,52 @@ async def test_delete_chore_removes_due_today_sensor(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     assert registry.async_get("binary_sensor.family_dashboard_trash_due_today") is None
+
+
+async def test_reminders_switch_persists_on_chore(hass: HomeAssistant):
+    entry = await _setup_entry(
+        hass, [_member("ada", "Ada")],
+        chores=[{"chore_id": "trash", "name": "Trash", "points": 5, "assigned_to": "ada"}],
+    )
+    assert hass.states.get("switch.family_dashboard_trash_reminders").state == "off"
+
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.family_dashboard_trash_reminders"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert entry.data["chores"][0]["reminders"] is True
+    assert hass.states.get("switch.family_dashboard_trash_reminders").state == "on"
+
+
+async def test_create_chore_from_scratch_reads_and_resets_reminders(hass: HomeAssistant):
+    entry = await _setup_entry(hass, [_member("ada", "Ada")])
+    await hass.services.async_call(
+        "text", "set_value",
+        {"entity_id": "text.family_dashboard_new_chore_name", "value": "Dishes"}, blocking=True,
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.family_dashboard_new_chore_reminders"}, blocking=True
+    )
+    await hass.services.async_call(
+        "family_dashboard", "add_chore",
+        {"entity_id": "text.family_dashboard_new_chore_name"}, blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert next(c for c in entry.data["chores"] if c["name"] == "Dishes")["reminders"] is True
+    assert hass.states.get("switch.family_dashboard_new_chore_reminders").state == "off"
+
+
+async def test_delete_chore_removes_reminders_switch(hass: HomeAssistant):
+    entry = await _setup_entry(
+        hass, [_member("ada", "Ada")],
+        chores=[{"chore_id": "trash", "name": "Trash", "points": 5, "assigned_to": "ada"}],
+    )
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_trash_reminders")
+
+    await crud.async_delete_chore(hass, entry, "trash")
+    await hass.async_block_till_done()
+
+    assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_trash_reminders") is None
