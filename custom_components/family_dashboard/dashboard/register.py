@@ -47,6 +47,7 @@ omitting it entirely if neither exists rather than guessing.
 from __future__ import annotations
 
 import inspect
+import logging
 
 from homeassistant.components import frontend, lovelace
 from homeassistant.components.lovelace import dashboard as lovelace_dashboard
@@ -54,11 +55,15 @@ from homeassistant.components.lovelace import resources as lovelace_resources
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+_LOGGER = logging.getLogger(__name__)
+
 DASHBOARD_URL_PATH = "family-dashboard"
 DASHBOARD_TITLE = "Family Dashboard"
 DASHBOARD_ICON = "mdi:home-heart"
 
 STRATEGY_RESOURCE_URL = "/local/family_dashboard/family-dashboard-strategy.js"
+# Where v0.9.0-beta.2 to beta.4 registered their bundled copies of the five third-party cards.
+_LEGACY_VENDOR_URL_PREFIX = "/local/family_dashboard/vendor/"
 
 
 def _resources_collection(hass: HomeAssistant) -> lovelace_resources.ResourceStorageCollection:
@@ -179,6 +184,12 @@ async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
     # `_async_ensure_loaded()` internally - is called here anyway as a cheap, harmless
     # guarantee rather than assuming that ordering always holds.
     await collection.async_get_info()
+    # Drop the beta-era bundled cards' resources: left registered, they load a second copy of
+    # each card next to the user's own HACS install (the race described above).
+    for item in list(collection.async_items()):
+        if item["url"].startswith(_LEGACY_VENDOR_URL_PREFIX):
+            _LOGGER.info("Family Dashboard: removing leftover bundled card resource %s", item["url"])
+            await collection.async_delete_item(item["id"])
     existing_urls = {item["url"] for item in collection.async_items()}
     if STRATEGY_RESOURCE_URL not in existing_urls:
         await collection.async_create_item({"res_type": "module", "url": STRATEGY_RESOURCE_URL})

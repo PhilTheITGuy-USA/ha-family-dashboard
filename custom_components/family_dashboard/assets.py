@@ -105,6 +105,13 @@ def _seed_sync(hass: HomeAssistant) -> list[str]:
         strategy_dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(strategy_src, strategy_dest)
 
+    # v0.9.0-beta.2 to beta.4 bundled the five third-party cards here (see this module's
+    # docstring). Upgrading never removed them, and `dashboard/register.py` drops their
+    # Lovelace resources, so delete the files too - this folder is ours alone.
+    vendor_dir = config_dir / "www" / "family_dashboard" / "vendor"
+    if vendor_dir.is_dir():
+        shutil.rmtree(vendor_dir)
+
     return [f"/local/family_dashboard/avatars/{f.name}" for f in sorted(avatars_dest.glob("*.png"))]
 
 

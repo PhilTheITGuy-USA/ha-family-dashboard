@@ -50,3 +50,17 @@ async def test_seeding_never_overwrites_an_existing_avatar(hass: HomeAssistant):
     await _setup_entry(hass)
 
     assert custom_avatar.read_bytes() == b"a real photo, not the shipped placeholder"
+
+
+async def test_leftover_vendored_cards_folder_is_removed(hass: HomeAssistant):
+    """v0.9.0-beta.2 to beta.4 bundled five third-party cards under www/family_dashboard/
+    vendor/. Upgrades never deleted them, so they'd race a user's own HACS copies - setup
+    removes our own leftover folder, leaving the rest of www/family_dashboard alone."""
+    vendor = Path(hass.config.config_dir) / "www" / "family_dashboard" / "vendor"
+    vendor.mkdir(parents=True, exist_ok=True)
+    (vendor / "bubble-card.js").write_text("customElements.define('bubble-card', ...)")
+
+    await _setup_entry(hass)
+
+    assert not vendor.exists()
+    assert (vendor.parent / "family-dashboard-strategy.js").is_file()
