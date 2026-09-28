@@ -14,6 +14,9 @@ Layout:
 - `custom_components/family_dashboard/` — the integration (the only thing HACS ships).
 - `tests/`, `pytest.ini`, `requirements_test.txt` — the pytest suite.
 - `README.md` (HACS-rendered), `SETUP.md` (end-user setup guide), `hacs.json`.
+- `docs/superpowers/specs/` and `plans/` — tracked design specs and implementation plans for
+  the chore scheduling and reminders/missed-list work. When a behavior rule they describe
+  changes, update the spec along with this file.
 - `testbench/` — the local HA test instance. Only `testbench/docker-compose.yml` is tracked;
   everything else there is gitignored local state: `config/` (HA's live `/config`),
   `config.base-snapshot.tar.gz`, `dev.env` (`HA_URL` + `HA_TOKEN` long-lived token),
