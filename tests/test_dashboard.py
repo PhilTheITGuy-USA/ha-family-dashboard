@@ -1148,3 +1148,48 @@ async def test_kiosk_chores_has_reminders_toggles_and_missed_list(hass):
 
     review_index = next(i for i, c in enumerate(kiosk_chores) if "Parent Review" in json.dumps(c))
     assert kiosk_chores.index(missed) == review_index + 1
+
+
+async def test_admin_linked_member_gets_features_and_mapping_for_everyone(hass):
+    """An HA admin linked to a roster member (e.g. the house owner) sees the Kiosk-only
+    Features & Mapping controls on their own Settings tab too, for the whole roster -
+    otherwise the admin has to log in as the Kiosk account to toggle anyone's features. The
+    Name/Color/Avatar grid stays scoped to their own member."""
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+
+    await hass.auth.async_create_user(name="Kiosk Account")
+    phil_account = await hass.auth.async_create_user(name="Phil Account", group_ids=[GROUP_ID_ADMIN])
+    ada_account = await hass.auth.async_create_user(name="Ada Account")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "roster": [
+                _member("Phil", "phil", ha_user_id=phil_account.id, list_presets=["shopping"]),
+                _member("Ada", "ada", ha_user_id=ada_account.id, list_presets=["shopping"]),
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    views = _views_by_path(await async_build_dashboard_config(hass, entry))
+
+    phil_settings = _view_cards(views["settings-phil"])
+    assert any(
+        c.get("type") == "markdown" and "Features & Mapping" in c.get("content", "")
+        for c in phil_settings
+    )
+    grids = [c for c in phil_settings if c.get("type") == "grid"]
+    assert len(grids) == 2
+    assert len(grids[0]["cards"]) == 1  # own Name/Color/Avatar only
+    assert len(grids[1]["cards"]) == 2  # feature rows for the whole roster
+    assert "switch.family_dashboard_ada_lists_enabled" in str(grids[1])
+    # Only Phil's own Name/Color/Avatar column sits above this grid, so each feature column
+    # has to name its member itself.
+    assert [stack["cards"][0].get("name") for stack in grids[1]["cards"]] == ["Phil", "Ada"]
+
+    ada_settings = _view_cards(views["settings-ada"])
+    assert "Features & Mapping" not in str(ada_settings)
+

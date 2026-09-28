@@ -6,8 +6,9 @@ Settings/Calendar by the top-level `select.py` shim (see that file's docstring).
 
 Options are plain native dropdowns (a handful of text choices) - no custom swatch-grid popup
 needed, unlike the 16-color case (`modules/settings/dashboard.py`'s `_color_picker_popup`).
-Assigned-to options are roster member NAMES plus `_UNASSIGNED_OPTION` ("Unassigned" - a chore/
-reward can genuinely have no owner, explicit user request), matching the wizard's own
+Assigned-to options are the NAMES of members who can hold a chore (`_assignable_member_names`)
+plus `_UNASSIGNED_OPTION` ("Unassigned" - a chore/reward can genuinely have no owner, explicit
+user request), matching the wizard's own
 name-then-resolve-to-`member_id` convention (`config_flow.py`'s `async_step_confirm`) - a name
 collision between two roster members is a pre-existing, unaddressed limitation, not something
 new here. Options are computed once at construction time from `entry.data`, same convention as
@@ -32,7 +33,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from ...const import CHORE_REPEATS, CONF_CHORES, CONF_REWARDS, CONF_ROSTER, DOMAIN
+from ...const import (
+    CHORE_REPEATS,
+    CONF_CHORES,
+    CONF_DISABLED,
+    CONF_FEATURES,
+    CONF_REWARDS,
+    CONF_ROSTER,
+    DOMAIN,
+)
 from . import crud
 from .crud import UNASSIGNED_OPTION
 from .sensor import (
@@ -47,10 +56,24 @@ from .crud import resolve_assigned_to as _resolve_assigned_to
 _REPEAT_OPTIONS = list(CHORE_REPEATS.values())
 
 
+def _assignable_member_names(entry: ConfigEntry, current_member_id: str | None = None) -> list[str]:
+    """Roster names (in roster order) a chore/reward can be assigned to: enabled members with
+    Chores & Rewards on. Anyone else would get no task sensor/buttons for it
+    (`sensor.py`'s `_assigned_member_has_chores`), so the item would silently vanish.
+    `current_member_id` keeps an existing item's current owner listed even if they've since
+    lost Chores, so its select shows a valid state instead of a value outside its options."""
+    return [
+        m["name"]
+        for m in entry.data[CONF_ROSTER]
+        if m["member_id"] == current_member_id
+        or ("chores" in m.get(CONF_FEATURES, []) and not m.get(CONF_DISABLED))
+    ]
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    member_names = [m["name"] for m in entry.data[CONF_ROSTER]]
+    member_names = _assignable_member_names(entry)
     entities: list = [
         NewChoreRepeatSelect(entry),
         ChoreScheduleRepeatSelect(entry),
@@ -58,11 +81,11 @@ async def async_setup_entry(
         NewRewardAssignedToSelect(entry, member_names),
     ]
     entities.extend(
-        ChoreAssignedToSelect(entry, chore, member_names)
+        ChoreAssignedToSelect(entry, chore, _assignable_member_names(entry, chore.get("assigned_to")))
         for chore in entry.data.get(CONF_CHORES, [])
     )
     entities.extend(
-        RewardAssignedToSelect(entry, reward, member_names)
+        RewardAssignedToSelect(entry, reward, _assignable_member_names(entry, reward.get("assigned_to")))
         for reward in entry.data.get(CONF_REWARDS, [])
     )
     async_add_entities(entities)

@@ -223,6 +223,12 @@ From the Options Flow you can:
 - Change the Parent Review PIN
 - Permanently delete a member — their chores fall back to Unassigned rather than disappearing
 
+Feature toggles, calendar/notify mappings, and Disable/Delete are also on the dashboard
+itself: the **Settings** tab's **Features & Mapping** section. It appears for the Kiosk
+account and for any Home Assistant administrator linked to a family member, never for other
+family members' own logins. A chore or reward can only be assigned to members who have
+Chores & Rewards turned on.
+
 > 💡 Disabling a feature for a member is reversible — re-enable it any time and the entities come back. Deleting a member is permanent but their chores are preserved under Unassigned.
 
 ---

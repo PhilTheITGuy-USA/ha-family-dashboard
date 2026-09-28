@@ -468,3 +468,46 @@ async def test_delete_chore_removes_reminders_switch(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_trash_reminders") is None
+
+
+async def test_assigned_to_options_only_list_members_with_chores(hass: HomeAssistant):
+    """Assigning a chore/reward to someone without Chores & Rewards (or a disabled member)
+    saved it but created no entities for it, so it silently vanished - the dropdowns must
+    only offer members who can actually receive one."""
+    parent = _member("phil", "Phil", features=("calendar", "lists"))
+    kid = _member("ada", "Ada")
+    gone = {**_member("grace", "Grace"), "disabled": True}
+    await _setup_entry(hass, [parent, kid, gone])
+
+    for entity_id in (
+        "select.family_dashboard_new_chore_assigned_to",
+        "select.family_dashboard_new_reward_assigned_to",
+    ):
+        assert hass.states.get(entity_id).attributes["options"] == ["Ada", "Unassigned"]
+
+
+async def test_existing_chore_keeps_its_current_assignee_as_an_option(hass: HomeAssistant):
+    """A chore already assigned to someone who has since lost Chores keeps showing that
+    name rather than an invalid state, while new picks are limited to eligible members."""
+    parent = _member("phil", "Phil", features=("calendar", "lists"))
+    kid = _member("ada", "Ada")
+    chore = {
+        "chore_id": "trash",
+        "name": "Trash",
+        "points": 10,
+        "assigned_to": "phil",
+        "repeat": "days_of_week",
+        "schedule_days": [],
+        "month_days": [],
+    }
+    reward = {"reward_id": "movie", "name": "Movie", "cost": 5, "assigned_to": None}
+    await _setup_entry(hass, [parent, kid], chores=[chore], rewards=[reward])
+
+    registry = er.async_get(hass)
+    entry_id = hass.config_entries.async_entries(DOMAIN)[0].entry_id
+    chore_select = registry.async_get_entity_id("select", DOMAIN, f"{entry_id}_trash_assigned_to")
+    reward_select = registry.async_get_entity_id("select", DOMAIN, f"{entry_id}_movie_assigned_to")
+    state = hass.states.get(chore_select)
+    assert state.attributes["options"] == ["Phil", "Ada", "Unassigned"]
+    assert state.state == "Phil"
+    assert hass.states.get(reward_select).attributes["options"] == ["Ada", "Unassigned"]

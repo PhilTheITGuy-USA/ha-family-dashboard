@@ -685,6 +685,28 @@ def _delete_member_tile(name_entity_id: str, member_name: str) -> dict:
     }
 
 
+def _member_label(member_name: str) -> dict:
+    """Plain name heading over one member's Features & Mapping column. On Kiosk the columns
+    line up under the Name/Color/Avatar grid, but an admin's personal Settings tab shows only
+    their own column there, so without this the other members' columns would be unlabeled."""
+    return {
+        "type": "custom:button-card",
+        "name": member_name,
+        "show_name": True,
+        "show_icon": False,
+        "tap_action": {"action": "none"},
+        "styles": {
+            "card": [
+                {"height": "32px"},
+                {"padding": "4px 10px"},
+                {"box-shadow": "none"},
+                {"background": "none"},
+            ],
+            "name": [{"font-size": "14px"}, {"font-weight": "700"}],
+        },
+    }
+
+
 def _feature_and_mapping_stack(
     member_id: str,
     member_name: str,
@@ -696,15 +718,16 @@ def _feature_and_mapping_stack(
 ) -> dict:
     """Kiosk/parent-only controls (Feature toggles + Calendar/Notify mapping + Remove Member)
     for one member - kept SEPARATE from `_member_settings_stack` (Name/Color/Avatar/
-    Birthdate), which is shown to every bucket, because these must only ever appear when
-    `only_member is None` (explicit user decision: a linked member should not be able to
-    change their own feature selection, calendar/notify mapping, or remove themselves, from
-    their personal bucket). All entity ids are pre-resolved by the caller via the entity
+    Birthdate), which is shown to every bucket, because these only appear for the Kiosk
+    bucket or an HA-admin-linked member's bucket (explicit user decision: an ordinary linked
+    member should not be able to change their own feature selection, calendar/notify mapping,
+    or remove themselves, from their personal bucket). All entity ids are pre-resolved by the caller via the entity
     registry, not guessed - see `_feature_toggle_pill`'s docstring for why guessing is unsafe
     here."""
     return {
         "type": "vertical-stack",
         "cards": [
+            _member_label(member_name),
             _feature_toggles_row(feature_entity_ids),
             _mapping_pill("Calendar", member_id, calendar_entity_id, "calendarmap"),
             _mapping_pill("Notify", member_id, notify_entity_id, "notifymap"),
@@ -720,7 +743,11 @@ def _feature_and_mapping_stack(
 
 
 async def async_settings_view_cards(
-    hass: HomeAssistant, entry: ConfigEntry, only_member: dict | None = None
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    only_member: dict | None = None,
+    *,
+    admin_controls: bool = False,
 ) -> list[dict]:
     """Matches `Better-Settings.png`'s dense grid of compact per-member cards - a prior version
     used a full-width markdown header + horizontal-stack per member (a plain linear list, not
@@ -743,7 +770,9 @@ async def async_settings_view_cards(
     `_feature_and_mapping_stack`) are Kiosk/parent-only - explicit user decision, unlike Name/
     Color/Avatar/Birthdate: they're only added when `only_member is None`, never for a linked
     member's own personal bucket, regardless of whose settings that bucket is otherwise
-    allowed to see. Chores & Rewards management (Add/edit/delete) does NOT live here - moved
+    allowed to see - except when `admin_controls` is set (the bucket's linked HA user is an
+    admin, see `dashboard/registry.py`'s `async_compute_admin_linked_member_ids`), which adds
+    them for the whole roster. Chores & Rewards management (Add/edit/delete) does NOT live here - moved
     to the Chores tab's PIN-gated Parent Review section on 2026-07-20 (live-reported: this
     Settings location was Kiosk-only but had no PIN gate at all, so any kid could add/
     reassign/repoint/delete chores and rewards freely) - see `modules/chores/dashboard.py`'s
@@ -772,7 +801,7 @@ async def async_settings_view_cards(
     cards.append({"type": "grid", "columns": 4, "square": False, "cards": member_stacks})
     cards.extend(popups)
 
-    if only_member is None:
+    if only_member is None or admin_controls:
         cards.append({"type": "markdown", "content": "## Features & Mapping"})
         feature_stacks = []
         mapping_popups = []

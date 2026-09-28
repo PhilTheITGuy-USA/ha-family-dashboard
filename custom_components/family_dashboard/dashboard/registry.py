@@ -188,6 +188,9 @@ class _Bucket:
     key: str
     user_ids: list[str]
     member: dict | None
+    # A personal bucket whose linked HA user is an admin also gets the Kiosk-only Settings
+    # controls (Features & Mapping) - see `async_compute_admin_linked_member_ids`.
+    is_admin: bool = False
 
 
 async def async_compute_kiosk_user_ids(hass: HomeAssistant, roster: list[dict]) -> frozenset[str]:
@@ -208,15 +211,37 @@ async def async_compute_kiosk_user_ids(hass: HomeAssistant, roster: list[dict]) 
     )
 
 
+async def async_compute_admin_linked_member_ids(
+    hass: HomeAssistant, roster: list[dict]
+) -> frozenset[str]:
+    """member_ids of roster members linked to an active HA admin account. Their personal
+    Settings tab also carries the Kiosk-only Features & Mapping controls - otherwise the
+    house admin, usually linked to their own roster member, would have to log in as the Kiosk
+    account just to toggle someone's features. Recomputed by `user_watch.py`, same as
+    `async_compute_kiosk_user_ids`, so an admin grant/revoke regenerates the dashboard."""
+    admin_user_ids = {
+        user.id for user in await hass.auth.async_get_users() if user.is_active and user.is_admin
+    }
+    return frozenset(
+        m["member_id"] for m in roster if m.get(CONF_HA_USER_ID) in admin_user_ids
+    )
+
+
 async def _build_viewer_buckets(hass: HomeAssistant, roster: list[dict]) -> list[_Bucket]:
     linked_members = [m for m in roster if m.get(CONF_HA_USER_ID)]
     kiosk_user_ids = list(await async_compute_kiosk_user_ids(hass, roster))
+    admin_member_ids = await async_compute_admin_linked_member_ids(hass, roster)
 
     buckets = []
     if kiosk_user_ids:
         buckets.append(_Bucket(key="kiosk", user_ids=kiosk_user_ids, member=None))
     buckets.extend(
-        _Bucket(key=member["member_id"], user_ids=[member[CONF_HA_USER_ID]], member=member)
+        _Bucket(
+            key=member["member_id"],
+            user_ids=[member[CONF_HA_USER_ID]],
+            member=member,
+            is_admin=member["member_id"] in admin_member_ids,
+        )
         for member in linked_members
     )
     return buckets
@@ -564,11 +589,14 @@ async def async_build_dashboard_config(hass: HomeAssistant, entry: ConfigEntry) 
     # Name/Color/Avatar settings (matches its "sees/can-adjust everything" role everywhere
     # else), but a linked member's own bucket only shows THEIR OWN settings, not another
     # family member's - explicit user requirement, a real access gap the earlier
-    # identical-content-for-everyone design left open.
+    # identical-content-for-everyone design left open. An HA-admin-linked member's bucket
+    # also gets the Kiosk-only Features & Mapping controls (for the whole roster).
     for bucket in buckets:
         is_kiosk = bucket.member is None
         nav = [_nav_row(bucket.key, "settings")] if is_kiosk else []
-        settings_cards = await async_settings_view_cards(hass, entry, only_member=bucket.member)
+        settings_cards = await async_settings_view_cards(
+            hass, entry, only_member=bucket.member, admin_controls=bucket.is_admin
+        )
         views.append(
             _build_view(
                 "Settings",

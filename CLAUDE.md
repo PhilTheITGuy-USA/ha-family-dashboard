@@ -40,7 +40,12 @@ source testbench/dev.env                                  # $HA_URL, $HA_TOKEN f
 
 The base state is roster Phil/Lhen/Tristan/Harlee; HA users dunsel (owner), Marcus, and
 Kiosk (password `kiosk`); `calendar.family`/`calendar.ava` fixtures; US/Philippines Holiday
-entries; family_dashboard installed and configured. To restore it: `down`, rename
+entries; family_dashboard installed and configured; HACS installed (GitHub-authorized) with the
+five Lovelace cards at SETUP.md's tested versions, served from `/hacsfiles/` like a real
+install. Dunsel is linked to Phil and Marcus to Lhen, so their Settings tabs are personal
+buckets (dunsel's also shows Features & Mapping, being an admin). The dev.env token is
+dunsel's: for a browser session as dunsel, put it in `localStorage.hassTokens` via a
+Playwright init script. To restore it: `down`, rename
 `testbench/config/`, `tar -xzf config.base-snapshot.tar.gz` inside `testbench/`, `up -d`.
 To make the current state the new base, `stop` the container first (the SQLite recorder and
 `.storage` JSON can be mid-write), then `tar -czf` and `start`. The snapshot contains the

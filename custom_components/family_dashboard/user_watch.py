@@ -11,7 +11,8 @@ fixed it, confirming the computation itself was correct, just stale.
 This module closes that gap by listening for HA's own real `user_added`/`user_updated`/
 `user_removed` bus events (`homeassistant.auth.EVENT_USER_*`, fired by the auth manager itself
 - not a custom mechanism) and triggering `hass.config_entries.async_reload` only when the
-computed Kiosk-bucket user-ID set actually changes as a result. NOT on every event
+computed Kiosk-bucket user-ID set, or the set of roster members linked to an HA admin (whose
+Settings tab carries the Features & Mapping controls), actually changes as a result. NOT on every event
 unconditionally: `user_updated` also fires for changes irrelevant to bucket membership
 (password, display name), and a reload tears down/recreates every entity this integration
 owns, not just the dashboard - reloading on every irrelevant event would be needless flicker.
@@ -29,7 +30,10 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
 from .const import CONF_ROSTER
-from .dashboard.registry import async_compute_kiosk_user_ids
+from .dashboard.registry import (
+    async_compute_admin_linked_member_ids,
+    async_compute_kiosk_user_ids,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _DEBOUNCE_SECONDS = 3
@@ -45,21 +49,28 @@ async def async_register_user_change_listener(
     of any kind, even an irrelevant one, would always look like a change and trigger a
     needless reload.
     """
-    roster = entry.data.get(CONF_ROSTER, [])
+    async def _snapshot() -> tuple[frozenset[str], frozenset[str]]:
+        roster = entry.data.get(CONF_ROSTER, [])
+        return (
+            await async_compute_kiosk_user_ids(hass, roster),
+            await async_compute_admin_linked_member_ids(hass, roster),
+        )
+
     state: dict = {
-        "snapshot": await async_compute_kiosk_user_ids(hass, roster),
+        "snapshot": await _snapshot(),
         "cancel_debounce": None,
     }
 
     async def _recheck(_now=None) -> None:
         state["cancel_debounce"] = None
-        current = await async_compute_kiosk_user_ids(hass, entry.data.get(CONF_ROSTER, []))
+        current = await _snapshot()
         if current != state["snapshot"]:
             _LOGGER.info(
-                "Family Dashboard: HA user registry change affects the Kiosk dashboard "
-                "bucket (was %s, now %s) - reloading entry to regenerate it",
-                set(state["snapshot"]),
-                set(current),
+                "Family Dashboard: HA user registry change affects the dashboard buckets "
+                "(Kiosk users/admin-linked members were %s, now %s) - reloading entry to "
+                "regenerate it",
+                [set(s) for s in state["snapshot"]],
+                [set(s) for s in current],
             )
             state["snapshot"] = current
             await hass.config_entries.async_reload(entry.entry_id)
