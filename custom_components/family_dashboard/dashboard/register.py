@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from pathlib import Path
 
 from homeassistant.components import frontend, lovelace
 from homeassistant.components.lovelace import dashboard as lovelace_dashboard
@@ -64,6 +65,15 @@ DASHBOARD_ICON = "mdi:home-heart"
 STRATEGY_RESOURCE_URL = "/local/family_dashboard/family-dashboard-strategy.js"
 # Where v0.9.0-beta.2 to beta.4 registered their bundled copies of the five third-party cards.
 _LEGACY_VENDOR_URL_PREFIX = "/local/family_dashboard/vendor/"
+# The third-party cards the dashboard needs (SETUP.md's Prerequisites), as HACS installs them:
+# (folder under /config/www/community/ and /hacsfiles/, file name).
+REQUIRED_CARDS = (
+    ("button-card", "button-card.js"),
+    ("Bubble-Card", "bubble-card.js"),
+    ("lovelace-card-mod", "card-mod.js"),
+    ("config-template-card", "config-template-card.js"),
+    ("week-planner-card", "week-planner-card.js"),
+)
 
 
 def _resources_collection(hass: HomeAssistant) -> lovelace_resources.ResourceStorageCollection:
@@ -184,13 +194,70 @@ async def async_register_strategy_resource(hass: HomeAssistant) -> bool:
     # `_async_ensure_loaded()` internally - is called here anyway as a cheap, harmless
     # guarantee rather than assuming that ordering always holds.
     await collection.async_get_info()
-    # Drop the beta-era bundled cards' resources: left registered, they load a second copy of
-    # each card next to the user's own HACS install (the race described above).
-    for item in list(collection.async_items()):
-        if item["url"].startswith(_LEGACY_VENDOR_URL_PREFIX):
-            _LOGGER.info("Family Dashboard: removing leftover bundled card resource %s", item["url"])
-            await collection.async_delete_item(item["id"])
     existing_urls = {item["url"] for item in collection.async_items()}
     if STRATEGY_RESOURCE_URL not in existing_urls:
         await collection.async_create_item({"res_type": "module", "url": STRATEGY_RESOURCE_URL})
     return True
+
+
+def _resource_filename(url: str) -> str:
+    return url.split("?", 1)[0].rsplit("/", 1)[-1]
+
+
+async def async_repair_card_resources(hass: HomeAssistant) -> None:
+    """Makes sure each required third-party card (`REQUIRED_CARDS`) is loaded by exactly one
+    registered resource, without ever leaving one with none:
+
+    - A card with no registered resource whose HACS file is on disk gets registered at the
+      same `/hacsfiles/<repo>/<file>` path HACS itself uses (HACS matches its own entries by
+      that prefix, so it adopts and re-tags ours on the next update). "Registered" means any
+      non-bundled resource ending in the card's file name, so a manual install elsewhere
+      counts and isn't doubled up.
+    - v0.9.0-beta.2 to beta.4 bundled the cards under `/local/family_dashboard/vendor/`. A
+      bundled resource, and its file, is removed only once another copy of that card is
+      registered - left alongside the user's own copy it loads the card twice, but removing
+      it first leaves the card unloaded. v1.2.1 removed them unconditionally and broke a live
+      install where four of the five were loaded only through their bundled resources.
+
+    Best-effort: a failure here is logged, never allowed to fail entry setup.
+    """
+    try:
+        await _async_repair_card_resources(hass)
+    except Exception:  # noqa: BLE001 - a repair must not take the whole integration down
+        _LOGGER.warning("Family Dashboard: could not check card resources", exc_info=True)
+
+
+async def _async_repair_card_resources(hass: HomeAssistant) -> None:
+    collection = _resources_collection(hass)
+    await collection.async_get_info()
+    community = Path(hass.config.path("www", "community"))
+    vendor_dir = Path(hass.config.path("www", "family_dashboard", "vendor"))
+
+    for hacs_dir, filename in REQUIRED_CARDS:
+        items = list(collection.async_items())
+        bundled = [i for i in items if i["url"].startswith(_LEGACY_VENDOR_URL_PREFIX)
+                   and _resource_filename(i["url"]) == filename]
+        registered = any(
+            not i["url"].startswith(_LEGACY_VENDOR_URL_PREFIX)
+            and _resource_filename(i["url"]) == filename
+            for i in items
+        )
+        if not registered and await hass.async_add_executor_job(
+            (community / hacs_dir / filename).is_file
+        ):
+            url = f"/hacsfiles/{hacs_dir}/{filename}"
+            _LOGGER.info("Family Dashboard: registering unloaded HACS card resource %s", url)
+            await collection.async_create_item({"res_type": "module", "url": url})
+            registered = True
+        if not registered:
+            continue
+        for item in bundled:
+            _LOGGER.info("Family Dashboard: removing bundled card resource %s", item["url"])
+            await collection.async_delete_item(item["id"])
+        await hass.async_add_executor_job(_remove_bundled_file, vendor_dir, filename)
+
+
+def _remove_bundled_file(vendor_dir: Path, filename: str) -> None:
+    (vendor_dir / filename).unlink(missing_ok=True)
+    if vendor_dir.is_dir() and not any(vendor_dir.iterdir()):
+        vendor_dir.rmdir()

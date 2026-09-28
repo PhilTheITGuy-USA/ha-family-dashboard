@@ -211,9 +211,12 @@ version banner in sync, then tag `vX.Y.Z` and publish a GitHub Release (not pre-
 
 The dashboard needs `button-card`, `bubble-card`, `card-mod`, `config-template-card`, and
 `week-planner-card` (pinned v1.14.1, since the calendar relies on its filter internals). Users
-install them as a manual HACS prerequisite; SETUP.md lists the tested versions. v0.9.0-beta.2
-to beta.4 did vendor them under `/local/family_dashboard/vendor/`; setup now deletes that
-folder (`assets.py`) and its Lovelace resources (`register.py`). Don't re-vendor
+install them as a manual HACS prerequisite; SETUP.md lists the tested versions. Setup's
+`async_repair_card_resources` (`register.py`) registers any of the five whose HACS file is on
+disk but that no resource loads, and removes a v0.9.0-beta.2 to beta.4 bundled copy
+(`/local/family_dashboard/vendor/`) only once another copy of that card is registered. v1.2.1
+deleted the bundled copies unconditionally and broke a live install that loaded four of the
+five only through them. Don't re-vendor
 them: none guard `customElements.define`, so a duplicate copy races and breaks (history in
 `assets.py`/`dashboard/register.py` docstrings). Keep SETUP.md in sync when card versions or
 the Family-calendar naming rule change.

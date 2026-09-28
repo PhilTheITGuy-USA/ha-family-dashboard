@@ -1194,33 +1194,6 @@ async def test_admin_linked_member_gets_features_and_mapping_for_everyone(hass):
     assert "Features & Mapping" not in str(ada_settings)
 
 
-async def test_leftover_vendored_card_resources_are_unregistered(hass):
-    """The beta-era bundled cards were registered as Lovelace resources under
-    /local/family_dashboard/vendor/ - those entries must go (they'd load a second copy next to
-    the user's own HACS install), while the strategy script and any user resource stay."""
-    from custom_components.family_dashboard.dashboard.register import (
-        STRATEGY_RESOURCE_URL,
-        _resources_collection,
-        async_register_strategy_resource,
-    )
-
-    assert await async_setup_component(hass, "lovelace", {"lovelace": {}})
-    await hass.async_block_till_done()
-    collection = _resources_collection(hass)
-    await collection.async_get_info()
-    for url in (
-        "/local/family_dashboard/vendor/bubble-card.js",
-        "/local/family_dashboard/vendor/button-card.js",
-        "/hacsfiles/Bubble-Card/bubble-card.js",
-    ):
-        await collection.async_create_item({"res_type": "module", "url": url})
-
-    assert await async_register_strategy_resource(hass)
-
-    urls = {item["url"] for item in collection.async_items()}
-    assert urls == {STRATEGY_RESOURCE_URL, "/hacsfiles/Bubble-Card/bubble-card.js"}
-
-
 def _bubble_preload_configs(popup: dict) -> dict:
     """Mirror of Bubble Card's pop-up card preloader (v3.2.5, `cn`/`un` in bubble-card.js):
     walk the pop-up's `cards` up to depth 6, record the FIRST config seen per built-in

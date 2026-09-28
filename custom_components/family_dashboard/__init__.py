@@ -25,7 +25,11 @@ from homeassistant.core import HomeAssistant
 
 from .assets import async_seed_assets
 from .const import CONF_FEATURES, CONF_ROSTER, DOMAIN, FEATURES, SETTINGS_PLATFORMS
-from .dashboard.register import async_register_dashboard, async_register_strategy_resource
+from .dashboard.register import (
+    async_register_dashboard,
+    async_register_strategy_resource,
+    async_repair_card_resources,
+)
 from .dashboard.registry import async_build_dashboard_config
 from .entity_ids import async_repair_prefixed_entity_ids
 from .holidays_setup import async_ensure_default_holidays
@@ -93,6 +97,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Registered before the dashboard config itself, so the strategy's custom element is
     # already resolvable by the time any browser tries to load a view using it.
     await async_register_strategy_resource(hass)
+    await async_repair_card_resources(hass)
 
     dashboard_config = await async_build_dashboard_config(hass, entry)
     await async_register_dashboard(hass, entry, dashboard_config)
