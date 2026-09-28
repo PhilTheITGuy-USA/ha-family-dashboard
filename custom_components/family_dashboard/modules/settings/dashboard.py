@@ -384,6 +384,17 @@ def _avatar_grid_js(entity_id: str, color_entity_id: str) -> str:
     )
 
 
+def _popup_template_content(template_card: dict) -> list[dict]:
+    """A Bubble pop-up's `cards` for a config-template-card whose grid's `cards` is a "${...}"
+    template. Bubble Card preloads each built-in card type it finds in a pop-up by handing the
+    FIRST config it sees for that type, raw and un-templated, to HA's `createCardElement` -
+    and HA's grid rejects a string `cards` ("card grid Error: Invalid configuration" in the
+    console, live-verified on Bubble Card v3.2.5). Its walk records a parent before its
+    children and skips types it already has, so this plain one-column grid with a real
+    `cards` list is what it preloads instead; visually it just holds the one card."""
+    return [{"type": "grid", "columns": 1, "square": False, "cards": [template_card]}]
+
+
 def _avatar_picker_popup(member_id: str) -> dict:
     entity_id = _avatar_select_entity_id(member_id)
     color_entity_id = _color_select_entity_id(member_id)
@@ -393,7 +404,7 @@ def _avatar_picker_popup(member_id: str) -> dict:
         "hash": f"#avatar-{member_id}",
         "name": "Choose Avatar",
         "icon": "mdi:face-man-profile",
-        "cards": [
+        "cards": _popup_template_content(
             {
                 "type": "custom:config-template-card",
                 "entities": [AVATARS_SENSOR_ENTITY_ID, entity_id, color_entity_id],
@@ -410,7 +421,7 @@ def _avatar_picker_popup(member_id: str) -> dict:
                     "cards": _avatar_grid_js(entity_id, color_entity_id),
                 },
             }
-        ],
+        ),
     }
 
 
@@ -539,7 +550,7 @@ def _mapping_picker_popup(member_id: str, entity_id: str, domain_prefix: str, *,
         "hash": f"#{hash_suffix}-{member_id}",
         "name": title,
         "icon": icon,
-        "cards": [
+        "cards": _popup_template_content(
             {
                 "type": "custom:config-template-card",
                 "entities": [entity_id],
@@ -550,7 +561,7 @@ def _mapping_picker_popup(member_id: str, entity_id: str, domain_prefix: str, *,
                     "cards": _entity_map_grid_js(entity_id, domain_prefix),
                 },
             }
-        ],
+        ),
     }
 
 

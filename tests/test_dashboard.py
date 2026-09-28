@@ -1219,3 +1219,66 @@ async def test_leftover_vendored_card_resources_are_unregistered(hass):
 
     urls = {item["url"] for item in collection.async_items()}
     assert urls == {STRATEGY_RESOURCE_URL, "/hacsfiles/Bubble-Card/bubble-card.js"}
+
+
+def _bubble_preload_configs(popup: dict) -> dict:
+    """Mirror of Bubble Card's pop-up card preloader (v3.2.5, `cn`/`un` in bubble-card.js):
+    walk the pop-up's `cards` up to depth 6, record the FIRST config seen per built-in
+    (non-`custom:`) type - a parent before its children, descending into `cards` lists and
+    object `card`s - and later hand each recorded config, raw and un-templated, to HA's
+    `createCardElement`."""
+    found: dict = {}
+
+    def walk(node, depth):
+        if not node or not isinstance(node, (dict, list)) or depth > 6:
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item, depth + 1)
+            return
+        card_type = node.get("type")
+        if isinstance(card_type, str) and card_type and not card_type.startswith("custom:"):
+            found.setdefault(card_type, node)
+        if isinstance(node.get("cards"), list):
+            walk(node["cards"], depth + 1)
+        if isinstance(node.get("card"), dict):
+            walk(node["card"], depth + 1)
+
+    walk(popup.get("cards"), 0)
+    return found
+
+
+async def test_bubble_popups_never_preload_an_unexpanded_template_grid(hass):
+    """Bubble Card preloads each built-in card type it finds in a pop-up using the raw config.
+    A config-template-card grid's `cards` is still a "${...}" string at that point, which HA's
+    grid rejects ("card grid Error: Invalid configuration" in the console) - so the first
+    config Bubble records for every type must already be valid, with a real `cards` list."""
+    kiosk_account = await hass.auth.async_create_user(name="Kiosk Account")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"roster": [_member("Ada", "ada", list_presets=["shopping"], chores=True)]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    config = await async_build_dashboard_config(hass, entry)
+    popups = []
+
+    def collect(node):
+        if isinstance(node, dict):
+            if node.get("card_type") == "pop-up":
+                popups.append(node)
+            for value in node.values():
+                collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect(value)
+
+    collect(config)
+    assert popups
+    for popup in popups:
+        for card_type, preloaded in _bubble_preload_configs(popup).items():
+            if "cards" in preloaded:
+                assert isinstance(preloaded["cards"], list), (popup.get("hash"), card_type)
+    assert kiosk_account.id
